@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { ListGamesBody } from "@workspace/api-zod";
-import { listGames } from "../lib/steamworks";
+import { listGames, debugListGames } from "../lib/steamworks";
 
 const router = Router();
 
@@ -15,6 +15,7 @@ router.post("/games/list", async (req, res): Promise<void> => {
 
   try {
     const result = await listGames(sessionid, steamLoginSecure);
+    req.log.info({ gamesFound: result.games.length, skipped: result.skipped.length }, "Game list returned");
     res.json(result);
   } catch (e) {
     const msg = (e as Error).message;
@@ -24,6 +25,24 @@ router.post("/games/list", async (req, res): Promise<void> => {
       req.log.error({ err: e }, "Game list failed");
       res.status(500).json({ error: "list_failed", message: msg });
     }
+  }
+});
+
+// Debug endpoint — returns raw diagnostic data about each scraping strategy
+router.post("/games/debug", async (req, res): Promise<void> => {
+  const parsed = ListGamesBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "validation_error", message: parsed.error.message });
+    return;
+  }
+
+  const { sessionid, steamLoginSecure } = parsed.data;
+
+  try {
+    const result = await debugListGames(sessionid, steamLoginSecure);
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error: "debug_failed", message: (e as Error).message });
   }
 });
 
