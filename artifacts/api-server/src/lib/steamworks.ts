@@ -69,7 +69,11 @@ function makeCookieHeader(sessionid: string, steamLoginSecure: string) {
 
 function isLoginRedirect(url: string | null): boolean {
   if (!url) return false;
-  return url.includes("/login") || url.includes("steampowered.com/login");
+  // JWT refresh is NOT a login expiry — it's a token mint for a different subdomain.
+  // The browser follows it transparently and gets new auth cookies back.
+  if (url.includes("login.steampowered.com/jwt/")) return false;
+  // Real login pages: /login as a path segment, OAuth/OpenID flows
+  return /\/login(\?|\/|$)/.test(url) || url.includes("openid");
 }
 
 // Only trigger on very explicit login-page markers to avoid false positives.
@@ -757,12 +761,46 @@ function parseTsv(text: string, colMap: Record<string, string>): StatRow[] {
 // ─── HTML page fetcher + scraper ─────────────────────────────────────────────
 
 /**
- * Fetch an HTML page from either partner.steamgames.com or partner.steampowered.com,
- * with the correct Referer header and cookie auth. Logs status, contentType, and
- * a body snippet so we can diagnose what came back.
+ * Parse Set-Cookie response headers into a flat name→value map.
+ * Skips deletion cookies (empty value or value === "deleted").
+ */
+function parseSetCookies(headers: Headers): Map<string, string> {
+  const out = new Map<string, string>();
+  // getSetCookie() returns each Set-Cookie header separately (Node 20+).
+  const setCookieList: string[] =
+    typeof (headers as Headers & { getSetCookie?: () => string[] }).getSetCookie === "function"
+      ? (headers as Headers & { getSetCookie: () => string[] }).getSetCookie()
+      : [];
+  for (const sc of setCookieList) {
+    const m = sc.match(/^\s*([^=;]+)=([^;]*)/);
+    if (!m) continue;
+    const name = m[1].trim();
+    const value = m[2].trim();
+    if (!value || value === "deleted") continue;
+    out.set(name, value);
+  }
+  return out;
+}
+
+function makeJarHeader(jar: Map<string, string>): string {
+  return Array.from(jar.entries())
+    .map(([k, v]) => `${k}=${v}`)
+    .join("; ");
+}
+
+/**
+ * Fetch a Steamworks page following the cross-subdomain JWT refresh dance:
  *
- * Throws "session_expired" if the response is the login page.
- * Returns an empty string if the response is OK but empty.
+ * 1. GET partner.steampowered.com/foo with steamLoginSecure
+ * 2. → 302 to login.steampowered.com/jwt/refresh?redir=...
+ * 3. We follow it with our jar; that endpoint Set-Cookies a fresh
+ *    steamLoginSecure for partner.steampowered.com, then 302s back.
+ * 4. We follow back with the now-updated jar → 200 OK with the real HTML.
+ *
+ * Browsers do this transparently. We replicate it manually so we can use
+ * the right cookie at each hop.
+ *
+ * Throws "session_expired" only if we end up on an actual login form.
  */
 async function fetchPartnerHtml(
   label: string,
@@ -770,42 +808,84 @@ async function fetchPartnerHtml(
   sessionid: string,
   steamLoginSecure: string
 ): Promise<string> {
+  const jar = new Map<string, string>([
+    ["sessionid", sessionid],
+    ["steamLoginSecure", normalizeSteamLoginSecure(steamLoginSecure)],
+  ]);
   const refererBase = url.startsWith(BASE_PARTNER) ? BASE_PARTNER : BASE;
-  const resp = await fetch(url, {
-    headers: {
-      Cookie: makeCookieHeader(sessionid, steamLoginSecure),
-      "User-Agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-      "Accept-Language": "en-US,en;q=0.9",
-      Referer: `${refererBase}/`,
-    },
-    redirect: "manual",
-  });
 
-  const text = await resp.text();
-  const contentType = resp.headers.get("content-type") || "";
-  const location = resp.headers.get("location");
+  let currentUrl = url;
+  let hopCount = 0;
+  const MAX_HOPS = 6;
+  const hopTrace: Array<{ status: number; url: string; loc: string | null; setCookies: string[] }> = [];
 
-  logger.info(
-    {
-      label,
-      url: url.replace(BASE_PARTNER, "[partner]").replace(BASE, "[games]"),
-      status: resp.status,
-      contentType,
-      location,
-      bodyLen: text.length,
-      bodySnippet: text.slice(0, 400),
-    },
-    "partner page fetch"
-  );
+  while (hopCount++ < MAX_HOPS) {
+    const resp = await fetch(currentUrl, {
+      headers: {
+        Cookie: makeJarHeader(jar),
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        Referer: `${refererBase}/`,
+      },
+      redirect: "manual",
+    });
 
-  if (resp.status === 301 || resp.status === 302 || resp.status === 303) {
-    if (isLoginRedirect(location)) throw new Error("session_expired");
-    return "";
+    const status = resp.status;
+    const location = resp.headers.get("location");
+    const newCookies = parseSetCookies(resp.headers);
+    hopTrace.push({
+      status,
+      url: currentUrl.length > 120 ? currentUrl.slice(0, 120) + "…" : currentUrl,
+      loc: location,
+      setCookies: Array.from(newCookies.keys()),
+    });
+
+    // Merge any new cookies into the jar
+    for (const [k, v] of newCookies) jar.set(k, v);
+
+    // Follow redirects manually (3xx + Location)
+    if (status >= 300 && status < 400 && location) {
+      // Resolve relative URLs against current URL
+      currentUrl = new URL(location, currentUrl).toString();
+      if (isLoginRedirect(currentUrl)) {
+        // Drain body to free the connection
+        await resp.text().catch(() => "");
+        logger.warn({ label, hopTrace }, "partner page fetch — bounced to login");
+        throw new Error("session_expired");
+      }
+      // Drain body so the socket is reused
+      await resp.text().catch(() => "");
+      continue;
+    }
+
+    // Final response (2xx, 4xx, 5xx)
+    const text = await resp.text();
+    const contentType = resp.headers.get("content-type") || "";
+
+    logger.info(
+      {
+        label,
+        url: url.replace(BASE_PARTNER, "[partner]").replace(BASE, "[games]"),
+        finalStatus: status,
+        finalUrl: currentUrl !== url ? currentUrl : undefined,
+        contentType,
+        bodyLen: text.length,
+        hops: hopTrace.length,
+        hopTrace,
+        bodySnippet: text.slice(0, 400),
+      },
+      "partner page fetch"
+    );
+
+    if (isLoginPage(text)) throw new Error("session_expired");
+    if (status >= 400) return "";
+    return text;
   }
-  if (isLoginPage(text)) throw new Error("session_expired");
-  return text;
+
+  logger.warn({ label, url, hopTrace }, "partner page fetch — too many redirects");
+  return "";
 }
 
 /**
@@ -1207,40 +1287,23 @@ export async function probeStats(
 
   for (const { metric, url } of probes) {
     try {
-      const resp = await fetch(url, {
-        headers: {
-          Cookie: makeCookieHeader(sessionid, steamLoginSecure),
-          "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-          Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-          "Accept-Language": "en-US,en;q=0.9",
-          Referer: url.startsWith(BASE_PARTNER) ? `${BASE_PARTNER}/` : `${BASE}/`,
-        },
-        redirect: "manual",
-      });
-      const text = await resp.text();
-      const contentType = resp.headers.get("content-type") || "";
-      const location = resp.headers.get("location") || "";
-      let parsedRowCount = 0;
-      let snippet = text.slice(0, 600);
-
-      if (resp.status === 200 && text.length > 0) {
-        const { tables, stats } = extractTablesAndStats(text);
-        parsedRowCount = tables.reduce((sum, t) => sum + t.rows.length, 0);
-        snippet = `tables=${tables.length} rows=${parsedRowCount} statBlocks=${stats.length}\n` +
-          tables.slice(0, 3).map((t, i) => `[T${i}] headers=[${t.headers.join(" | ")}] firstRow=[${(t.rows[0] || []).join(" | ")}]`).join("\n") +
-          (snippet ? `\n--- raw start ---\n${snippet.slice(0, 300)}` : "");
-      } else if (location) {
-        snippet = `→ redirect to ${location}\n` + snippet;
-      }
-
+      // Uses the same JWT-refresh-aware fetcher as the real pull.
+      const text = await fetchPartnerHtml(`probe:${metric}`, url, sessionid, steamLoginSecure);
+      const { tables, stats } = extractTablesAndStats(text);
+      const parsedRowCount = tables.reduce((sum, t) => sum + t.rows.length, 0);
+      const snippet =
+        `tables=${tables.length} totalRows=${parsedRowCount} statBlocks=${stats.length}\n` +
+        tables
+          .slice(0, 4)
+          .map((t, i) => `[T${i}] headers=[${t.headers.join(" | ")}] firstRow=[${(t.rows[0] || []).join(" | ")}]`)
+          .join("\n");
       results.push({
         metric,
         url: url.replace(BASE_PARTNER, "[partner]").replace(BASE, "[games]"),
-        status: resp.status,
-        contentType,
+        status: text.length > 0 ? 200 : 0,
+        contentType: "text/html",
         bodyLen: text.length,
-        bodySnippet: snippet,
+        bodySnippet: snippet || "(empty body)",
         parsedRowCount,
       });
     } catch (e) {
