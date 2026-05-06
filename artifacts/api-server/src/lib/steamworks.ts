@@ -1,5 +1,25 @@
 import * as cheerio from "cheerio";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { logger } from "./logger";
+
+/**
+ * Per-pull HTML prefetch cache. When set, fetchPartnerHtml returns the
+ * pre-stashed HTML for a URL instead of making a network request. This is
+ * how the bookmarklet flow works: the user's browser does the actual
+ * fetches (using their real session/IP), submits the HTML, and the server
+ * runs the existing parsers against the submitted HTML.
+ */
+const prefetchStorage = new AsyncLocalStorage<Map<string, string>>();
+
+export function runWithPrefetch<T>(map: Map<string, string>, fn: () => Promise<T>): Promise<T> {
+  return prefetchStorage.run(map, fn);
+}
+
+/** Extract appId+name list from a Steamworks /home page HTML. Used by the bookmarklet flow. */
+export function parseGamesFromHomeHtml(html: string): GamesListResult {
+  const apps = extractAppsFromHtml(html);
+  return classifyApps(apps);
+}
 
 export interface GameInfo {
   appId: number;
@@ -675,7 +695,7 @@ function getDateRange(granularity: string): { start: string; end: string; granSt
  * Same date range but formatted as ISO YYYY-MM-DD with dashes.
  * Required for the partner.steampowered.com URLs which use ?dateStart= / ?dateEnd=.
  */
-function getDateRangeIso(granularity: string): { startIso: string; endIso: string } {
+export function getDateRangeIso(granularity: string): { startIso: string; endIso: string } {
   const now = new Date();
   const fmt = (d: Date) =>
     `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -814,6 +834,22 @@ async function fetchPartnerHtml(
   // partner.steampowered.com / login.steampowered.com / store.steampowered.com
   // need cookies issued for *.steampowered.com. partner.steamgames.com needs
   // cookies issued for *.steamgames.com. Steam mints these as separate cookies.
+  // Bookmarklet flow: if a prefetch cache is set, it is the only source of HTML.
+  // - Cache hit: return submitted HTML.
+  // - Cache miss: treat as "no data" instead of doing a network fetch (because
+  //   in this mode we don't have the user's Steam cookies on the server).
+  const prefetched = prefetchStorage.getStore();
+  if (prefetched) {
+    if (prefetched.has(url)) {
+      const html = prefetched.get(url) ?? "";
+      logger.info({ label, url, bodyLen: html.length }, "partner page fetch (prefetched from browser)");
+      if (isLoginPage(html)) throw new Error("session_expired");
+      return html;
+    }
+    logger.info({ label, url }, "partner page fetch (prefetch miss — returning empty)");
+    return "";
+  }
+
   const isSteampoweredHost = url.startsWith(BASE_PARTNER);
   const useSid = isSteampoweredHost && partnerSessionid ? partnerSessionid : sessionid;
   const useSecure = isSteampoweredHost && partnerSteamLoginSecure ? partnerSteamLoginSecure : steamLoginSecure;

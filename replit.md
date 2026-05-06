@@ -37,12 +37,14 @@ A single-page web app that connects to your Steamworks publisher account using s
 
 ## Architecture decisions
 
-- **No database** — fully stateless. Pull jobs live in an in-memory Map on the API server (TTL: 2h). Tab close wipes sessionStorage.
-- **Job polling** — frontend polls `/api/pull/status/:jobId` every 1s while running. No WebSocket or SSE needed.
-- **Per-metric resilience** — each stat module (wishlists, visits, sales, etc.) catches errors independently; one failure doesn't kill the whole pull.
-- **Cookies stay client-side** — sessionStorage only, cleared on tab close, never persisted to server DB.
-- **Steamworks scraping** — HTML scraping via cheerio + JSON fallback endpoints. Each metric independently tries both methods.
-- **Two cookie pairs required** — Steam mints separate `sessionid`/`steamLoginSecure` cookies for `partner.steamgames.com` (used to list games) and `partner.steampowered.com` (used to pull stats). The fetcher picks the right pair per URL host. JWT refresh on `login.steampowered.com` will silently fail to mint a fresh JWT if the wrong-domain cookies are sent, leaving the user bounced to the real login page.
+- **Two flows, both stateless** — primary: bookmarklet (no cookies hit our server). Legacy: cookie-paste (kept as fallback).
+- **Bookmarklet flow (primary)** — User installs a one-line `javascript:` bookmark that loads `/api/bookmarklet.js` from us. The script runs in their already-logged-in Steamworks tab, fetches stat pages with `credentials: 'include'` (using their real IP+session), POSTs raw HTML to our server. Server reuses existing parsers via an `AsyncLocalStorage<Map<url, html>>` "prefetch cache" — `fetchPartnerHtml` returns from the cache instead of hitting the network.
+- **Why bookmarklet** — Steam's `login.steampowered.com/jwt/refresh` is IP-bound and silently fails from data-center IPs (Replit, AWS, etc.), bouncing pasted cookies to the login page. Running in the user's browser sidesteps this entirely.
+- **Two-domain handoff** — Steam splits pages between `partner.steamgames.com` (game list, traffic) and `partner.steampowered.com` (wishlists, sales). Browser CORS blocks cross-domain reads, so the bookmarklet must be clicked once on each domain. State is held server-side as a single "active job" (single-user tool); the second click looks up `/api/browser-pull/active` to find the session.
+- **No database** — fully stateless. Pull jobs live in-memory (TTL: 2h). Tab close wipes sessionStorage. Bookmarklet jobs live in `routes/browser-pull.ts` `activeJob` + `completedJobs` Map.
+- **JSON body limit bumped to 50mb** — bookmarklet POSTs many ~100KB Steam HTML pages at once.
+- **Per-metric resilience** — each stat module catches errors independently; one failure doesn't kill the whole pull. In bookmarklet mode, missing prefetch entries also degrade gracefully (return empty data, no `session_expired` throw).
+- **Legacy cookie flow caveats** — Steam mints separate cookie pairs for `*.steamgames.com` and `*.steampowered.com`. The fetcher picks the right pair per host. Still subject to the IP-binding issue above.
 
 ## Product
 
