@@ -42,6 +42,7 @@ export interface DebugResult {
 }
 
 const BASE = "https://partner.steamgames.com";
+const BASE_PARTNER = "https://partner.steampowered.com";
 
 /**
  * Build the Cookie header.
@@ -666,6 +667,22 @@ function getDateRange(granularity: string): { start: string; end: string; granSt
   return { start: fmt(start), end: fmt(now), granStr };
 }
 
+/**
+ * Same date range but formatted as ISO YYYY-MM-DD with dashes.
+ * Required for the partner.steampowered.com URLs which use ?dateStart= / ?dateEnd=.
+ */
+function getDateRangeIso(granularity: string): { startIso: string; endIso: string } {
+  const now = new Date();
+  const fmt = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const start = new Date(now);
+  if (granularity === "weekly") start.setDate(now.getDate() - 7);
+  else if (granularity === "monthly") start.setDate(now.getDate() - 30);
+  else if (granularity === "lifetime") start.setFullYear(2003, 0, 1);
+  // daily: start = today
+  return { startIso: fmt(start), endIso: fmt(now) };
+}
+
 // ─── Stat helpers ────────────────────────────────────────────────────────────
 
 type StatsJsonRow = Record<string, string | number>;
@@ -737,50 +754,271 @@ function parseTsv(text: string, colMap: Record<string, string>): StatRow[] {
   return rows;
 }
 
-// ─── Per-metric fetch functions ───────────────────────────────────────────────
+// ─── HTML page fetcher + scraper ─────────────────────────────────────────────
 
+/**
+ * Fetch an HTML page from either partner.steamgames.com or partner.steampowered.com,
+ * with the correct Referer header and cookie auth. Logs status, contentType, and
+ * a body snippet so we can diagnose what came back.
+ *
+ * Throws "session_expired" if the response is the login page.
+ * Returns an empty string if the response is OK but empty.
+ */
+async function fetchPartnerHtml(
+  label: string,
+  url: string,
+  sessionid: string,
+  steamLoginSecure: string
+): Promise<string> {
+  const refererBase = url.startsWith(BASE_PARTNER) ? BASE_PARTNER : BASE;
+  const resp = await fetch(url, {
+    headers: {
+      Cookie: makeCookieHeader(sessionid, steamLoginSecure),
+      "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Accept-Language": "en-US,en;q=0.9",
+      Referer: `${refererBase}/`,
+    },
+    redirect: "manual",
+  });
+
+  const text = await resp.text();
+  const contentType = resp.headers.get("content-type") || "";
+  const location = resp.headers.get("location");
+
+  logger.info(
+    {
+      label,
+      url: url.replace(BASE_PARTNER, "[partner]").replace(BASE, "[games]"),
+      status: resp.status,
+      contentType,
+      location,
+      bodyLen: text.length,
+      bodySnippet: text.slice(0, 400),
+    },
+    "partner page fetch"
+  );
+
+  if (resp.status === 301 || resp.status === 302 || resp.status === 303) {
+    if (isLoginRedirect(location)) throw new Error("session_expired");
+    return "";
+  }
+  if (isLoginPage(text)) throw new Error("session_expired");
+  return text;
+}
+
+/**
+ * Extract every table on the page as { headers, rows }.
+ * Also extracts numeric "summary" cells (big number + label pattern) so we can
+ * surface things like "Total Wishlist Adds: 1,234" even when there's no table.
+ */
+function extractTablesAndStats(html: string): {
+  tables: Array<{ headers: string[]; rows: string[][] }>;
+  stats: Array<{ label: string; value: string }>;
+} {
+  const $ = cheerio.load(html);
+  const tables: Array<{ headers: string[]; rows: string[][] }> = [];
+
+  $("table").each((_, tbl) => {
+    const headers: string[] = [];
+    $(tbl)
+      .find("thead th, thead td, tr:first-child th")
+      .each((__, th) => {
+        headers.push($(th).text().trim());
+      });
+
+    const rows: string[][] = [];
+    $(tbl)
+      .find("tbody tr")
+      .each((__, tr) => {
+        const cells = $(tr)
+          .find("td")
+          .map((___, td) => $(td).text().trim())
+          .get();
+        if (cells.length > 0) rows.push(cells);
+      });
+
+    // Fallback: if no thead, treat first <tr> as headers
+    if (headers.length === 0 && rows.length > 1) {
+      const firstRow = rows.shift();
+      if (firstRow) headers.push(...firstRow);
+    }
+
+    if (rows.length > 0 || headers.length > 0) {
+      tables.push({ headers, rows });
+    }
+  });
+
+  // Collect "label: number" style stats (often used for summary blocks)
+  const stats: Array<{ label: string; value: string }> = [];
+  $(".summary_stat, .stat_block, .stats_card, [class*='summary'] [class*='value']").each((_, el) => {
+    const text = $(el).text().trim();
+    const match = text.match(/^(.+?)[:\s]+([\d,.]+)$/);
+    if (match) stats.push({ label: match[1].trim(), value: match[2].replace(/,/g, "") });
+  });
+
+  return { tables, stats };
+}
+
+/** Match a header label to a known column key. Case/punctuation insensitive. */
+function matchHeader(header: string, patterns: RegExp[]): boolean {
+  const norm = header.toLowerCase().replace(/[^a-z0-9]/g, "");
+  return patterns.some((p) => p.test(norm));
+}
+
+/**
+ * Convert a generic { headers, rows } table into StatRow[] using a column-key
+ * resolver. Preserves any extra columns under their normalized header name.
+ */
+function tableToStatRows(
+  headers: string[],
+  rows: string[][],
+  resolveKey: (header: string) => string | null
+): StatRow[] {
+  if (rows.length === 0) return [];
+  const keys = headers.map((h) => resolveKey(h) ?? h.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, ""));
+  return rows
+    .map((cells) => {
+      const out: StatRow = { date: "" };
+      keys.forEach((k, i) => {
+        if (k && cells[i] !== undefined) {
+          const val = cells[i].replace(/[,$]/g, "").trim();
+          out[k] = val;
+        }
+      });
+      // Ensure `date` field exists — first column is usually date
+      if (!out.date && cells[0]) out.date = cells[0];
+      return out;
+    })
+    .filter((r) => Object.keys(r).length > 1);
+}
+
+// ─── Per-metric fetch functions (using the actual data URLs) ─────────────────
+
+/**
+ * Wishlist data: https://partner.steampowered.com/app/wishlist/{appId}/
+ */
 async function fetchWishlists(
+  appId: number,
+  sessionid: string,
+  steamLoginSecure: string,
+  _granularity: string
+): Promise<StatRow[]> {
+  try {
+    const url = `${BASE_PARTNER}/app/wishlist/${appId}/`;
+    const html = await fetchPartnerHtml("wishlist", url, sessionid, steamLoginSecure);
+    if (!html) return [];
+
+    const { tables, stats } = extractTablesAndStats(html);
+    logger.info({ appId, tableCount: tables.length, statCount: stats.length, headers: tables.map((t) => t.headers) }, "wishlist parse");
+
+    // Find the table that has wishlist-related headers
+    for (const { headers, rows } of tables) {
+      const hasDate = headers.some((h) => matchHeader(h, [/^date$/, /^day$/, /^week$/, /^month$/]));
+      const hasWishlistish = headers.some((h) => matchHeader(h, [/add/, /balance/, /wishlist/, /total/, /delete/, /purchase/]));
+      if (!hasDate || !hasWishlistish) continue;
+
+      const result = tableToStatRows(headers, rows, (h) => {
+        if (matchHeader(h, [/^date$/, /^day$/, /^week$/, /^month$/])) return "date";
+        if (matchHeader(h, [/add/])) return "adds";
+        if (matchHeader(h, [/delete/])) return "deletes";
+        if (matchHeader(h, [/purchase/, /gift/, /activation/])) return "purchases";
+        if (matchHeader(h, [/balance/, /^total$/, /currentwishlist/, /^net$/])) return "balance";
+        return null;
+      });
+      if (result.length > 0) return result;
+    }
+
+    // No table matched — fall back to summary stats if present
+    if (stats.length > 0) {
+      return [{ date: "Summary", adds: stats.find((s) => /add/i.test(s.label))?.value || "0", balance: stats.find((s) => /balance|total/i.test(s.label))?.value || "0" }];
+    }
+  } catch (e) {
+    if ((e as Error).message === "session_expired") throw e;
+    logger.warn({ appId, err: (e as Error).message }, "Wishlist fetch error");
+  }
+  return [];
+}
+
+/**
+ * Sales data: https://partner.steampowered.com/app/details/{appId}/?dateStart=YYYY-MM-DD&dateEnd=YYYY-MM-DD
+ */
+async function fetchSales(
   appId: number,
   sessionid: string,
   steamLoginSecure: string,
   granularity: string
 ): Promise<StatRow[]> {
-  const { start, end, granStr } = getDateRange(granularity);
+  try {
+    const { startIso, endIso } = getDateRangeIso(granularity);
+    const url = `${BASE_PARTNER}/app/details/${appId}/?dateStart=${startIso}&dateEnd=${endIso}`;
+    const html = await fetchPartnerHtml("sales", url, sessionid, steamLoginSecure);
+    if (!html) return [];
 
-  const endpoints = [
-    // Try the JSON endpoint first (format=json tells Valve backend to respond with JSON)
-    `${BASE}/partner/stats/dashboard/wishlist?appid=${appId}&start=${start}&end=${end}&granularity=${granStr}&format=json`,
-    // Alternative: raw wishlist history endpoint
-    `${BASE}/apps/wishlisthistory/?appid=${appId}&start=${start}&end=${end}&granularity=${granStr}`,
-  ];
+    const { tables, stats } = extractTablesAndStats(html);
+    logger.info({ appId, tableCount: tables.length, statCount: stats.length, headers: tables.map((t) => t.headers) }, "sales parse");
 
-  for (const url of endpoints) {
-    try {
-      const { ok, contentType, text } = await statFetch("wishlist", url, sessionid, steamLoginSecure, true);
-      if (!ok) continue;
-      if (contentType.includes("json") || text.trimStart().startsWith("{") || text.trimStart().startsWith("[")) {
-        const rows = parseJsonRows(text);
-        if (rows.length > 0) {
-          return rows.map((r) => ({
-            date: String(r.date ?? r.dt ?? r.Date ?? ""),
-            adds: String(r.adds ?? r.Adds ?? r.wishlist_adds ?? "0"),
-            deletes: String(r.deletes ?? r.Deletes ?? r.wishlist_deletes ?? "0"),
-            purchases: String(r.purchases ?? r.Purchases ?? r.wishlist_purchases ?? "0"),
-            balance: String(r.balance ?? r.Balance ?? r.total ?? "0"),
-          }));
-        }
-      }
-      // TSV fallback
-      if (text.includes("\t")) {
-        const rows = parseTsv(text, { date: "date", adds: "adds", deletes: "deletes", purchases: "purchases", balance: "balance" });
-        if (rows.length > 0) return rows;
-      }
-    } catch (e) {
-      if ((e as Error).message === "session_expired") throw e;
+    // Sales tables typically have Units, Gross/Net Revenue
+    for (const { headers, rows } of tables) {
+      const hasSalesish = headers.some((h) =>
+        matchHeader(h, [/unit/, /sale/, /revenue/, /gross/, /^net$/, /purchase/, /licens/, /activation/])
+      );
+      if (!hasSalesish) continue;
+
+      const result = tableToStatRows(headers, rows, (h) => {
+        if (matchHeader(h, [/^date$/, /^day$/, /^week$/, /^month$/, /^period$/])) return "date";
+        if (matchHeader(h, [/unit/, /^sales$/, /licens/, /activation/, /purchase/])) return "units";
+        if (matchHeader(h, [/grossrevenue/, /^gross$/])) return "gross_revenue";
+        if (matchHeader(h, [/netrevenue/, /^net$/])) return "net_revenue";
+        if (matchHeader(h, [/^revenue$/])) return "gross_revenue";
+        return null;
+      });
+      if (result.length > 0) return result;
     }
+
+    if (stats.length > 0) {
+      return [{
+        date: "Summary",
+        units: stats.find((s) => /unit|sale|licens/i.test(s.label))?.value || "0",
+        gross_revenue: stats.find((s) => /gross|revenue/i.test(s.label))?.value || "0",
+      }];
+    }
+  } catch (e) {
+    if ((e as Error).message === "session_expired") throw e;
+    logger.warn({ appId, err: (e as Error).message }, "Sales fetch error");
   }
-  logger.warn({ appId }, "Wishlist: all endpoints returned no data");
   return [];
+}
+
+/**
+ * Single fetch for the navtrafficstats page — contains visits, impressions,
+ * AND traffic breakdown. Cached per-appId so the two consumer functions
+ * (fetchVisits, fetchTrafficBreakdown) only trigger one HTTP request per game.
+ */
+const trafficStatsCache = new Map<string, { tables: Array<{ headers: string[]; rows: string[][] }>; stats: Array<{ label: string; value: string }> }>();
+
+async function getTrafficStats(
+  appId: number,
+  sessionid: string,
+  steamLoginSecure: string,
+  granularity: string
+) {
+  const cacheKey = `${appId}|${granularity}`;
+  const cached = trafficStatsCache.get(cacheKey);
+  if (cached) return cached;
+
+  const url = `${BASE}/apps/navtrafficstats/${appId}`;
+  const html = await fetchPartnerHtml("navtrafficstats", url, sessionid, steamLoginSecure);
+  if (!html) {
+    const empty = { tables: [], stats: [] };
+    trafficStatsCache.set(cacheKey, empty);
+    return empty;
+  }
+  const parsed = extractTablesAndStats(html);
+  logger.info({ appId, tableCount: parsed.tables.length, statCount: parsed.stats.length, headers: parsed.tables.map((t) => t.headers) }, "navtrafficstats parse");
+  trafficStatsCache.set(cacheKey, parsed);
+  return parsed;
 }
 
 async function fetchVisits(
@@ -789,37 +1027,39 @@ async function fetchVisits(
   steamLoginSecure: string,
   granularity: string
 ): Promise<StatRow[]> {
-  const { start, end, granStr } = getDateRange(granularity);
+  try {
+    const { tables, stats } = await getTrafficStats(appId, sessionid, steamLoginSecure, granularity);
 
-  const endpoints = [
-    `${BASE}/partner/stats/dashboard/visits?appid=${appId}&start=${start}&end=${end}&granularity=${granStr}&format=json`,
-    `${BASE}/apps/pageimpressions/?appid=${appId}&start=${start}&end=${end}&granularity=${granStr}`,
-  ];
+    // Visits table: has columns like Date, Visits, Unique Visitors, Impressions
+    for (const { headers, rows } of tables) {
+      const hasDate = headers.some((h) => matchHeader(h, [/^date$/, /^day$/, /^week$/, /^month$/]));
+      const hasVisits = headers.some((h) => matchHeader(h, [/visit/, /impression/, /view/, /unique/]));
+      // Skip breakdown tables (they have a "source" column instead of date)
+      const isBreakdown = headers.some((h) => matchHeader(h, [/source/, /referrer/, /^from$/, /channel/]));
+      if (!hasDate || !hasVisits || isBreakdown) continue;
 
-  for (const url of endpoints) {
-    try {
-      const { ok, contentType, text } = await statFetch("visits", url, sessionid, steamLoginSecure, true);
-      if (!ok) continue;
-      if (contentType.includes("json") || text.trimStart().startsWith("{") || text.trimStart().startsWith("[")) {
-        const rows = parseJsonRows(text);
-        if (rows.length > 0) {
-          return rows.map((r) => ({
-            date: String(r.date ?? r.dt ?? r.Date ?? ""),
-            visits: String(r.visits ?? r.Visits ?? r.page_visits ?? "0"),
-            unique_visitors: String(r.unique_visitors ?? r.unique ?? r.UniqueVisitors ?? "0"),
-            impressions: String(r.impressions ?? r.Impressions ?? "0"),
-          }));
-        }
-      }
-      if (text.includes("\t")) {
-        const rows = parseTsv(text, { date: "date", visits: "visits", unique_visitors: "unique_visitors", impressions: "impressions" });
-        if (rows.length > 0) return rows;
-      }
-    } catch (e) {
-      if ((e as Error).message === "session_expired") throw e;
+      const result = tableToStatRows(headers, rows, (h) => {
+        if (matchHeader(h, [/^date$/, /^day$/, /^week$/, /^month$/])) return "date";
+        if (matchHeader(h, [/uniquevisit/, /^unique$/])) return "unique_visitors";
+        if (matchHeader(h, [/^visits?$/, /pageview/, /pagevisit/])) return "visits";
+        if (matchHeader(h, [/impression/])) return "impressions";
+        return null;
+      });
+      if (result.length > 0) return result;
     }
+
+    if (stats.length > 0) {
+      return [{
+        date: "Summary",
+        visits: stats.find((s) => /visit/i.test(s.label))?.value || "0",
+        unique_visitors: stats.find((s) => /unique/i.test(s.label))?.value || "0",
+        impressions: stats.find((s) => /impression/i.test(s.label))?.value || "0",
+      }];
+    }
+  } catch (e) {
+    if ((e as Error).message === "session_expired") throw e;
+    logger.warn({ appId, err: (e as Error).message }, "Visits fetch error");
   }
-  logger.warn({ appId }, "Visits: all endpoints returned no data");
   return [];
 }
 
@@ -829,126 +1069,74 @@ async function fetchTrafficBreakdown(
   steamLoginSecure: string,
   granularity: string
 ): Promise<StatRow[]> {
-  const { start, end, granStr } = getDateRange(granularity);
+  try {
+    const { tables } = await getTrafficStats(appId, sessionid, steamLoginSecure, granularity);
 
-  const endpoints = [
-    `${BASE}/partner/stats/dashboard/trafficbreakdown?appid=${appId}&start=${start}&end=${end}&granularity=${granStr}&format=json`,
-  ];
+    for (const { headers, rows } of tables) {
+      const isBreakdown = headers.some((h) => matchHeader(h, [/source/, /referrer/, /^from$/, /channel/, /category/]));
+      if (!isBreakdown) continue;
 
-  for (const url of endpoints) {
-    try {
-      const { ok, contentType, text } = await statFetch("trafficbreakdown", url, sessionid, steamLoginSecure, true);
-      if (!ok) continue;
-      if (contentType.includes("json") || text.trimStart().startsWith("{") || text.trimStart().startsWith("[")) {
-        const rows = parseJsonRows(text);
-        if (rows.length > 0) {
-          return rows.map((r) => ({
-            date: String(r.date ?? r.source ?? r.Source ?? ""),
-            source: String(r.source ?? r.Source ?? ""),
-            visits: String(r.visits ?? r.Visits ?? "0"),
-            unique_visitors: String(r.unique_visitors ?? r.unique ?? "0"),
-          }));
-        }
-      }
-      if (text.includes("\t")) {
-        const rows = parseTsv(text, { source: "source", visits: "visits", unique_visitors: "unique_visitors" });
-        if (rows.length > 0) return rows;
-      }
-    } catch (e) {
-      if ((e as Error).message === "session_expired") throw e;
+      const result = tableToStatRows(headers, rows, (h) => {
+        if (matchHeader(h, [/source/, /referrer/, /^from$/, /channel/, /category/])) return "source";
+        if (matchHeader(h, [/uniquevisit/, /^unique$/])) return "unique_visitors";
+        if (matchHeader(h, [/^visits?$/, /pageview/])) return "visits";
+        if (matchHeader(h, [/impression/])) return "impressions";
+        return null;
+      });
+      // Re-map: source goes into both `date` (for output column) and `source`
+      const mapped = result.map((r) => ({ ...r, date: String(r.source || r.date || "") }));
+      if (mapped.length > 0) return mapped;
     }
+  } catch (e) {
+    if ((e as Error).message === "session_expired") throw e;
+    logger.warn({ appId, err: (e as Error).message }, "Traffic breakdown fetch error");
   }
-  logger.warn({ appId }, "TrafficBreakdown: all endpoints returned no data");
   return [];
 }
 
-async function fetchSales(
-  appId: number,
-  sessionid: string,
-  steamLoginSecure: string,
-  granularity: string
-): Promise<StatRow[]> {
-  const { start, end, granStr } = getDateRange(granularity);
-
-  // saledata is a known Steamworks endpoint that returns TSV/tab-delimited data
-  const endpoints = [
-    `${BASE}/apps/saledata/?appid=${appId}&start=${start}&end=${end}&granularity=${granStr}`,
-    `${BASE}/partner/stats/dashboard/transactions?appid=${appId}&start=${start}&end=${end}&granularity=${granStr}&format=json`,
-  ];
-
-  for (const url of endpoints) {
-    try {
-      const { ok, contentType, text } = await statFetch("sales", url, sessionid, steamLoginSecure, false);
-      if (!ok) continue;
-      if (contentType.includes("json") || text.trimStart().startsWith("{") || text.trimStart().startsWith("[")) {
-        const rows = parseJsonRows(text);
-        if (rows.length > 0) {
-          return rows.map((r) => ({
-            date: String(r.date ?? r.dt ?? r.Date ?? ""),
-            units: String(r.units ?? r.Units ?? r.purchases ?? "0"),
-            gross_revenue: String(r.gross_revenue ?? r.gross ?? r.GrossRevenue ?? "0"),
-            net_revenue: String(r.net_revenue ?? r.net ?? r.NetRevenue ?? "0"),
-          }));
-        }
-      }
-      if (text.includes("\t")) {
-        // Typical saledata columns: Date, Units, Net Revenue (USD), Gross Revenue (USD)
-        const rows = parseTsv(text, {
-          date: "date",
-          units: "units",
-          net_revenue__usd_: "net_revenue",
-          gross_revenue__usd_: "gross_revenue",
-          net_revenue: "net_revenue",
-          gross_revenue: "gross_revenue",
-          purchases: "units",
-        });
-        if (rows.length > 0) return rows;
-      }
-    } catch (e) {
-      if ((e as Error).message === "session_expired") throw e;
-    }
-  }
-  logger.warn({ appId }, "Sales: all endpoints returned no data");
-  return [];
-}
-
+/**
+ * Followers — no specific URL provided by user. Try the wishlist page (which
+ * usually shows follower count too) and fall back to the legacy followers URL.
+ */
 async function fetchFollowers(
   appId: number,
   sessionid: string,
   steamLoginSecure: string,
-  granularity: string
+  _granularity: string
 ): Promise<StatRow[]> {
-  const { start, end, granStr } = getDateRange(granularity);
+  try {
+    const url = `${BASE_PARTNER}/app/wishlist/${appId}/`;
+    const html = await fetchPartnerHtml("followers", url, sessionid, steamLoginSecure);
+    if (!html) return [];
 
-  const endpoints = [
-    `${BASE}/partner/stats/dashboard/followers?appid=${appId}&start=${start}&end=${end}&granularity=${granStr}&format=json`,
-    `${BASE}/apps/followers/?appid=${appId}&start=${start}&end=${end}&granularity=${granStr}`,
-  ];
+    const { tables, stats } = extractTablesAndStats(html);
 
-  for (const url of endpoints) {
-    try {
-      const { ok, contentType, text } = await statFetch("followers", url, sessionid, steamLoginSecure, true);
-      if (!ok) continue;
-      if (contentType.includes("json") || text.trimStart().startsWith("{") || text.trimStart().startsWith("[")) {
-        const rows = parseJsonRows(text);
-        if (rows.length > 0) {
-          return rows.map((r) => ({
-            date: String(r.date ?? r.dt ?? r.Date ?? ""),
-            followers_added: String(r.followers_added ?? r.added ?? r.Followers ?? "0"),
-            total_followers: String(r.total_followers ?? r.total ?? r.Total ?? "0"),
-          }));
-        }
-      }
-      if (text.includes("\t")) {
-        const rows = parseTsv(text, { date: "date", followers_added: "followers_added", total_followers: "total_followers" });
-        if (rows.length > 0) return rows;
-      }
-    } catch (e) {
-      if ((e as Error).message === "session_expired") throw e;
+    for (const { headers, rows } of tables) {
+      const hasFollowers = headers.some((h) => matchHeader(h, [/follow/]));
+      const hasDate = headers.some((h) => matchHeader(h, [/^date$/, /^day$/, /^week$/, /^month$/]));
+      if (!hasFollowers || !hasDate) continue;
+
+      const result = tableToStatRows(headers, rows, (h) => {
+        if (matchHeader(h, [/^date$/, /^day$/, /^week$/, /^month$/])) return "date";
+        if (matchHeader(h, [/followersadded/, /newfollow/, /add/])) return "followers_added";
+        if (matchHeader(h, [/totalfollow/, /^follow/, /^followers$/])) return "total_followers";
+        return null;
+      });
+      if (result.length > 0) return result;
     }
+
+    const total = stats.find((s) => /follow/i.test(s.label));
+    if (total) return [{ date: "Summary", followers_added: "n/a", total_followers: total.value }];
+  } catch (e) {
+    if ((e as Error).message === "session_expired") throw e;
+    logger.warn({ appId, err: (e as Error).message }, "Followers fetch error");
   }
-  logger.warn({ appId }, "Followers: all endpoints returned no data");
   return [];
+}
+
+/** Clear the in-process traffic cache. Called at start of each pull. */
+export function clearStatsCache() {
+  trafficStatsCache.clear();
 }
 
 async function fetchReviews(
@@ -999,74 +1187,66 @@ export async function probeStats(
   steamLoginSecure: string,
   granularity: string
 ): Promise<ProbeResult[]> {
-  const { start, end, granStr } = getDateRange(granularity);
+  const { startIso, endIso } = getDateRangeIso(granularity);
   const results: ProbeResult[] = [];
 
-  const probes: Array<{ metric: string; url: string; useJsonHeaders: boolean }> = [
+  const probes: Array<{ metric: string; url: string }> = [
     {
-      metric: "wishlist (json)",
-      url: `${BASE}/partner/stats/dashboard/wishlist?appid=${appId}&start=${start}&end=${end}&granularity=${granStr}&format=json`,
-      useJsonHeaders: true,
+      metric: "navtrafficstats (visits + impressions + breakdown)",
+      url: `${BASE}/apps/navtrafficstats/${appId}`,
     },
     {
-      metric: "wishlist-history",
-      url: `${BASE}/apps/wishlisthistory/?appid=${appId}&start=${start}&end=${end}&granularity=${granStr}`,
-      useJsonHeaders: false,
+      metric: "wishlist",
+      url: `${BASE_PARTNER}/app/wishlist/${appId}/`,
     },
     {
-      metric: "visits (json)",
-      url: `${BASE}/partner/stats/dashboard/visits?appid=${appId}&start=${start}&end=${end}&granularity=${granStr}&format=json`,
-      useJsonHeaders: true,
-    },
-    {
-      metric: "impressions",
-      url: `${BASE}/apps/pageimpressions/?appid=${appId}&start=${start}&end=${end}&granularity=${granStr}`,
-      useJsonHeaders: false,
-    },
-    {
-      metric: "saledata (tsv)",
-      url: `${BASE}/apps/saledata/?appid=${appId}&start=${start}&end=${end}&granularity=${granStr}`,
-      useJsonHeaders: false,
-    },
-    {
-      metric: "transactions (json)",
-      url: `${BASE}/partner/stats/dashboard/transactions?appid=${appId}&start=${start}&end=${end}&granularity=${granStr}&format=json`,
-      useJsonHeaders: true,
-    },
-    {
-      metric: "followers (json)",
-      url: `${BASE}/partner/stats/dashboard/followers?appid=${appId}&start=${start}&end=${end}&granularity=${granStr}&format=json`,
-      useJsonHeaders: true,
-    },
-    {
-      metric: "trafficbreakdown (json)",
-      url: `${BASE}/partner/stats/dashboard/trafficbreakdown?appid=${appId}&start=${start}&end=${end}&granularity=${granStr}&format=json`,
-      useJsonHeaders: true,
+      metric: "details (sales)",
+      url: `${BASE_PARTNER}/app/details/${appId}/?dateStart=${startIso}&dateEnd=${endIso}`,
     },
   ];
 
-  for (const { metric, url, useJsonHeaders } of probes) {
+  for (const { metric, url } of probes) {
     try {
-      const resp = useJsonHeaders
-        ? await fetchJsonWithCookies(url, sessionid, steamLoginSecure)
-        : await fetchWithCookies(url, sessionid, steamLoginSecure);
+      const resp = await fetch(url, {
+        headers: {
+          Cookie: makeCookieHeader(sessionid, steamLoginSecure),
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          "Accept-Language": "en-US,en;q=0.9",
+          Referer: url.startsWith(BASE_PARTNER) ? `${BASE_PARTNER}/` : `${BASE}/`,
+        },
+        redirect: "manual",
+      });
       const text = await resp.text();
       const contentType = resp.headers.get("content-type") || "";
-      const parsedRows = parseJsonRows(text);
-      const tsvRows = text.includes("\t") ? parseTsv(text, {}) : [];
+      const location = resp.headers.get("location") || "";
+      let parsedRowCount = 0;
+      let snippet = text.slice(0, 600);
+
+      if (resp.status === 200 && text.length > 0) {
+        const { tables, stats } = extractTablesAndStats(text);
+        parsedRowCount = tables.reduce((sum, t) => sum + t.rows.length, 0);
+        snippet = `tables=${tables.length} rows=${parsedRowCount} statBlocks=${stats.length}\n` +
+          tables.slice(0, 3).map((t, i) => `[T${i}] headers=[${t.headers.join(" | ")}] firstRow=[${(t.rows[0] || []).join(" | ")}]`).join("\n") +
+          (snippet ? `\n--- raw start ---\n${snippet.slice(0, 300)}` : "");
+      } else if (location) {
+        snippet = `→ redirect to ${location}\n` + snippet;
+      }
+
       results.push({
         metric,
-        url: url.replace(BASE, ""),
+        url: url.replace(BASE_PARTNER, "[partner]").replace(BASE, "[games]"),
         status: resp.status,
         contentType,
         bodyLen: text.length,
-        bodySnippet: text.slice(0, 600),
-        parsedRowCount: parsedRows.length + tsvRows.length,
+        bodySnippet: snippet,
+        parsedRowCount,
       });
     } catch (e) {
       results.push({
         metric,
-        url: url.replace(BASE, ""),
+        url: url.replace(BASE_PARTNER, "[partner]").replace(BASE, "[games]"),
         status: 0,
         contentType: "",
         bodyLen: 0,
@@ -1074,7 +1254,7 @@ export async function probeStats(
         parsedRowCount: 0,
       });
     }
-    await sleep(300);
+    await sleep(400);
   }
 
   return results;
@@ -1104,6 +1284,9 @@ export async function pullAllStats(
   const totalSteps = appIds.length * METRICS.length;
   let stepsDone = 0;
   const startTime = Date.now();
+
+  // Reset the per-pull traffic page cache so a re-pull re-fetches.
+  clearStatsCache();
 
   for (let i = 0; i < appIds.length; i++) {
     if (isCancelled()) break;
