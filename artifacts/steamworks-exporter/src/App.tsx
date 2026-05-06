@@ -41,8 +41,8 @@ function BookmarkletInstall({ onUseLegacy }: { onUseLegacy: () => void }) {
             Install the Steamworks Exporter bookmark
           </h2>
           <p className="text-sm text-muted-foreground mt-1">
-            One-time setup. After this, you can export stats with two clicks
-            and never have to paste cookies again.
+            A one-time setup that lets you export your Steamworks publisher
+            stats to Excel directly from your browser.
           </p>
         </div>
 
@@ -104,23 +104,6 @@ function BookmarkletInstall({ onUseLegacy }: { onUseLegacy: () => void }) {
           </ol>
         </div>
 
-        <div className="rounded-md bg-amber-500/10 border border-amber-500/30 p-3">
-          <p className="text-xs text-amber-200/90 leading-relaxed">
-            <strong>Why this works:</strong> the bookmark runs inside your
-            already-logged-in Steamworks tab, using your real session. No
-            cookies leave your browser. Only the parsed page HTML is sent to
-            the server to build your Excel file.
-          </p>
-        </div>
-      </div>
-
-      <div className="text-center">
-        <button
-          onClick={onUseLegacy}
-          className="text-xs text-muted-foreground underline hover:text-foreground"
-        >
-          Having trouble? Use the legacy cookie-paste flow instead.
-        </button>
       </div>
     </div>
   );
@@ -274,7 +257,7 @@ function HomePage() {
             Steamworks<span className="text-foreground">Exporter</span>
           </h1>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Export publisher stats to Excel — no cookies, no logins
+            Export your Steamworks publisher stats to Excel
           </p>
         </div>
       </header>
