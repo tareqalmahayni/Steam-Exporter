@@ -43,8 +43,27 @@ export interface DebugResult {
 
 const BASE = "https://partner.steamgames.com";
 
+/**
+ * Build the Cookie header.
+ *
+ * Chrome DevTools Application tab URL-decodes cookie values for display.
+ * steamLoginSecure is stored / sent by Steam as URL-encoded
+ * (e.g. `76561198000000000%7Ctoken` with `%7C` for the pipe `|`).
+ * When users copy from DevTools they get the decoded `|` version.
+ * We normalise it back to %7C so Steam's server accepts it.
+ */
+function normalizeSteamLoginSecure(value: string): string {
+  // If already URL-encoded (contains %7C / %7c / %7B etc) leave it alone.
+  // If it has raw pipe chars and no % escapes, encode the pipes.
+  if (!value.includes("%") && value.includes("|")) {
+    return value.replace(/\|/g, "%7C");
+  }
+  return value;
+}
+
 function makeCookieHeader(sessionid: string, steamLoginSecure: string) {
-  return `sessionid=${sessionid}; steamLoginSecure=${steamLoginSecure}`;
+  const secureCookie = normalizeSteamLoginSecure(steamLoginSecure);
+  return `sessionid=${sessionid}; steamLoginSecure=${secureCookie}`;
 }
 
 function isLoginRedirect(url: string | null): boolean {
@@ -229,8 +248,13 @@ async function tryGetFullList(
       body: `sessionid=${encodeURIComponent(sessionid)}&format=json`,
     });
 
-    if (resp.status === 301 || resp.status === 302) {
-      const loc = resp.headers.get("location") || "";
+    const isRedirect = resp.status === 301 || resp.status === 302 || resp.status === 303;
+    const loc = resp.headers.get("location") || "";
+    const contentType = resp.headers.get("content-type") || "";
+
+    logger.info({ status: resp.status, isRedirect, loc, contentType }, "getfulllist response headers");
+
+    if (isRedirect) {
       if (isLoginRedirect(loc)) throw new Error("session_expired");
       return [];
     }
@@ -240,23 +264,31 @@ async function tryGetFullList(
       return [];
     }
 
-    const contentType = resp.headers.get("content-type") || "";
+    const text = await resp.text();
+    logger.info({ bodyLen: text.length, bodySnippet: text.slice(0, 500) }, "getfulllist body");
+
     if (!contentType.includes("json")) {
-      const text = await resp.text();
       if (isLoginPage(text)) throw new Error("session_expired");
-      logger.warn({ contentType, snippet: text.slice(0, 200) }, "getfulllist not JSON");
+      logger.warn({ contentType }, "getfulllist not JSON content-type");
       return [];
     }
 
-    const json = await resp.json() as {
+    let json: {
       nAllAppCount?: number;
       rgAllApps?: Array<{ nAppID?: number; appid?: number; strName?: string; name?: string; strAppType?: string; type?: string }>;
       apps?: Array<{ appid?: number; nAppID?: number; name?: string; strName?: string; strAppType?: string; type?: string }>;
     };
+    try {
+      json = JSON.parse(text) as typeof json;
+    } catch {
+      logger.warn({ snippet: text.slice(0, 200) }, "getfulllist JSON parse error");
+      return [];
+    }
 
     const rawApps = json.rgAllApps || json.apps || [];
+    logger.info({ rawAppsCount: rawApps.length, keys: Object.keys(json) }, "getfulllist parsed JSON");
+
     if (rawApps.length === 0) {
-      logger.warn({ json: JSON.stringify(json).slice(0, 300) }, "getfulllist returned empty rgAllApps");
       return [];
     }
 
@@ -268,6 +300,110 @@ async function tryGetFullList(
   } catch (e) {
     if ((e as Error).message === "session_expired") throw e;
     logger.warn({ err: e }, "getfulllist threw");
+    return [];
+  }
+}
+
+// Strategy 1b: GET /apps/getallappids — alternate endpoint some partner accounts expose
+async function tryGetAllAppIds(
+  sessionid: string,
+  steamLoginSecure: string
+): Promise<Array<{ appId: number; name: string; type: string }>> {
+  try {
+    const resp = await fetchJsonWithCookies(`${BASE}/apps/getallappids`, sessionid, steamLoginSecure);
+
+    if (resp.status === 301 || resp.status === 302 || resp.status === 303) {
+      const loc = resp.headers.get("location") || "";
+      if (isLoginRedirect(loc)) throw new Error("session_expired");
+      return [];
+    }
+    if (!resp.ok) return [];
+
+    const text = await resp.text();
+    logger.info({ status: resp.status, bodyLen: text.length, bodySnippet: text.slice(0, 300) }, "getallappids response");
+
+    if (!text.trim().startsWith("{") && !text.trim().startsWith("[")) return [];
+
+    const json = JSON.parse(text) as {
+      appids?: number[];
+      rgAllApps?: Array<{ nAppID?: number; strName?: string; strAppType?: string }>;
+    };
+
+    if (json.rgAllApps) {
+      return json.rgAllApps.map((a) => ({
+        appId: a.nAppID ?? 0,
+        name: a.strName ?? "",
+        type: (a.strAppType || "game").toLowerCase(),
+      })).filter((a) => a.appId && a.name);
+    }
+    // If it just returns a list of IDs without names, return them with placeholder names
+    if (json.appids) {
+      return json.appids.map((id) => ({ appId: id, name: `App ${id}`, type: "game" }));
+    }
+    return [];
+  } catch (e) {
+    if ((e as Error).message === "session_expired") throw e;
+    logger.warn({ err: e }, "getallappids threw");
+    return [];
+  }
+}
+
+// Strategy 1c: look for JSON app data embedded in <script> tags on /home
+// Steamworks sometimes inlines initial React state as window.__appData or similar
+async function tryExtractScriptJson(
+  sessionid: string,
+  steamLoginSecure: string
+): Promise<Array<{ appId: number; name: string; type: string }>> {
+  try {
+    const resp = await fetchWithCookies(`${BASE}/home`, sessionid, steamLoginSecure);
+
+    if (resp.status === 301 || resp.status === 302 || resp.status === 303) {
+      const loc = resp.headers.get("location") || "";
+      if (isLoginRedirect(loc)) throw new Error("session_expired");
+      return [];
+    }
+    if (!resp.ok) return [];
+
+    const html = await resp.text();
+    if (isLoginPage(html)) throw new Error("session_expired");
+
+    const $ = cheerio.load(html);
+    const results: Array<{ appId: number; name: string; type: string }> = [];
+    const seen = new Set<number>();
+
+    // Look in all inline <script> tags for patterns like "nAppID":12345 or "appid":12345
+    $("script:not([src])").each((_, el) => {
+      const src = $(el).html() || "";
+      // Match JSON-like app id patterns in JS blobs
+      const idPattern = /"(?:nAppID|appid|appID)"\s*:\s*(\d{4,10})/g;
+      const namePattern = /"(?:strName|name)"\s*:\s*"([^"]+)"/g;
+
+      // Try to find paired app IDs + names near each other
+      let m: RegExpExecArray | null;
+      const localIds: number[] = [];
+      const localNames: string[] = [];
+
+      while ((m = idPattern.exec(src)) !== null) localIds.push(parseInt(m[1], 10));
+      while ((m = namePattern.exec(src)) !== null) localNames.push(m[1]);
+
+      if (localIds.length > 0 && localNames.length === localIds.length) {
+        for (let i = 0; i < localIds.length; i++) {
+          const appId = localIds[i];
+          if (appId && !seen.has(appId)) {
+            seen.add(appId);
+            results.push({ appId, name: localNames[i], type: "game" });
+          }
+        }
+      }
+    });
+
+    if (results.length > 0) {
+      logger.info({ count: results.length }, "Extracted app data from script tags on /home");
+    }
+    return results;
+  } catch (e) {
+    if ((e as Error).message === "session_expired") throw e;
+    logger.warn({ err: e }, "extractScriptJson threw");
     return [];
   }
 }
@@ -356,7 +492,8 @@ async function tryScrapeHomePage(
   }
 }
 
-const EXCLUDED_TYPES = new Set(["demo", "dlc", "playtest", "beta", "tool", "music", "video"]);
+// Only exclude these clearly non-base-game types. Unknown type → keep as game.
+const EXCLUDED_TYPES = new Set(["demo", "dlc", "playtest", "beta", "tool", "music", "video", "config"]);
 const EXCLUDED_SUFFIXES = ["demo", "playtest", "beta", "soundtrack"];
 
 function classifyApps(allApps: Array<{ appId: number; name: string; type: string }>): GamesListResult {
@@ -387,31 +524,23 @@ export async function listGames(
   sessionid: string,
   steamLoginSecure: string
 ): Promise<GamesListResult> {
-  // Try all strategies in order, use the first one that returns results
-  let allApps: Array<{ appId: number; name: string; type: string }> = [];
+  type AppList = Array<{ appId: number; name: string; type: string }>;
+  const strategies: Array<[string, () => Promise<AppList>]> = [
+    ["getfulllist",    () => tryGetFullList(sessionid, steamLoginSecure)],
+    ["getallappids",   () => tryGetAllAppIds(sessionid, steamLoginSecure)],
+    ["script-json",    () => tryExtractScriptJson(sessionid, steamLoginSecure)],
+    ["apps-page",      () => tryScrapeAppsPage(sessionid, steamLoginSecure)],
+    ["apps-landing",   () => tryScrapeAppsLanding(sessionid, steamLoginSecure)],
+    ["home-page",      () => tryScrapeHomePage(sessionid, steamLoginSecure)],
+  ];
 
-  allApps = await tryGetFullList(sessionid, steamLoginSecure);
-  if (allApps.length > 0) {
-    logger.info({ count: allApps.length, strategy: "getfulllist" }, "Games found");
-    return classifyApps(allApps);
-  }
-
-  allApps = await tryScrapeAppsPage(sessionid, steamLoginSecure);
-  if (allApps.length > 0) {
-    logger.info({ count: allApps.length, strategy: "apps-page" }, "Games found");
-    return classifyApps(allApps);
-  }
-
-  allApps = await tryScrapeAppsLanding(sessionid, steamLoginSecure);
-  if (allApps.length > 0) {
-    logger.info({ count: allApps.length, strategy: "apps-landing" }, "Games found");
-    return classifyApps(allApps);
-  }
-
-  allApps = await tryScrapeHomePage(sessionid, steamLoginSecure);
-  if (allApps.length > 0) {
-    logger.info({ count: allApps.length, strategy: "home-page" }, "Games found");
-    return classifyApps(allApps);
+  for (const [name, fn] of strategies) {
+    const allApps = await fn();
+    if (allApps.length > 0) {
+      logger.info({ count: allApps.length, strategy: name }, "Games found via strategy");
+      return classifyApps(allApps);
+    }
+    logger.info({ strategy: name }, "Strategy returned 0 apps");
   }
 
   logger.warn("All game list strategies returned 0 results");
