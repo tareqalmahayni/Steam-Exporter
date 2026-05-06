@@ -31,8 +31,12 @@ await copyDir(
   "api-server build"
 );
 
+// Vite emits to artifacts/steamworks-exporter/dist/public (see its vite.config.ts
+// `build.outDir`). We copy that inner folder so desktop/dist/web/index.html
+// sits at the root, which is what Express's static middleware + SPA fallback
+// expects in the packaged app.
 await copyDir(
-  path.join(repo, "artifacts/steamworks-exporter/dist"),
+  path.join(repo, "artifacts/steamworks-exporter/dist/public"),
   path.join(root, "dist/web"),
   "frontend build"
 );

@@ -43,7 +43,7 @@ Cross-platform installers: see `.github/workflows/build-desktop.yml` (push a `v*
   - `src/main.ts` — main process: spawns api-server, opens window, handles Steam-login IPC
   - `src/preload.ts` — exposes `window.desktop` bridge
   - `scripts/build-main.mjs` — esbuild for main + preload
-  - `scripts/bundle-resources.mjs` — copies api-server + frontend builds into `desktop/dist/{server,web}`
+  - `scripts/bundle-resources.mjs` — copies api-server + frontend builds into `desktop/dist/{server,web}`. Frontend source is `artifacts/steamworks-exporter/dist/public/` (Vite's `build.outDir`), NOT the parent `dist/` — copying the parent makes Express's SPA fallback fail with "Cannot GET /" in the packaged app.
 - `.github/workflows/build-desktop.yml` — Mac/Win/Linux installer build
 
 ## Architecture decisions
