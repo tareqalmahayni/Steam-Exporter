@@ -5,26 +5,33 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useListGames, type GameInfo, type PullRequestGranularity } from "@workspace/api-client-react";
-import { Loader2, RefreshCw, AlertTriangle, PlusCircle, FlaskConical, CheckCircle2, XCircle } from "lucide-react";
+import { Loader2, RefreshCw, AlertTriangle, PlusCircle, ChevronDown, ChevronRight } from "lucide-react";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 
+interface Credentials {
+  sessionid: string;
+  steamLoginSecure: string;
+  partnerSessionid: string;
+  partnerSteamLoginSecure: string;
+}
+
 interface StepPickGamesProps {
-  credentials: { sessionid: string; steamLoginSecure: string; partnerSessionid: string; partnerSteamLoginSecure: string };
+  credentials: Credentials;
   selectedGames: number[];
   setSelectedGames: (appIds: number[]) => void;
   granularity: PullRequestGranularity;
   setGranularity: (g: PullRequestGranularity) => void;
+  customStartIso: string;
+  setCustomStartIso: (v: string) => void;
+  customEndIso: string;
+  setCustomEndIso: (v: string) => void;
 }
 
-interface ProbeResult {
-  metric: string;
-  url: string;
-  status: number;
-  contentType: string;
-  bodyLen: number;
-  bodySnippet: string;
-  parsedRowCount: number;
+interface TotalsState {
+  loading: boolean;
+  data?: { wishlists: number; impressions: number; visits: number; errors: string[] };
+  error?: string;
 }
 
 export function StepPickGames({
@@ -33,16 +40,20 @@ export function StepPickGames({
   setSelectedGames,
   granularity,
   setGranularity,
+  customStartIso,
+  setCustomStartIso,
+  customEndIso,
+  setCustomEndIso,
 }: StepPickGamesProps) {
   const [games, setGames] = useState<GameInfo[]>([]);
   const [skipped, setSkipped] = useState<GameInfo[]>([]);
   const [manualMode, setManualMode] = useState(false);
   const [manualInput, setManualInput] = useState("");
   const [manualError, setManualError] = useState("");
-  const [probeResults, setProbeResults] = useState<ProbeResult[] | null>(null);
-  const [probeLoading, setProbeLoading] = useState(false);
-  const [probeError, setProbeError] = useState("");
-  const [probeOpen, setProbeOpen] = useState(false);
+  const [expanded, setExpanded] = useState<Record<number, boolean>>({});
+  const [totals, setTotals] = useState<Record<number, TotalsState>>({});
+
+  const today = new Date().toISOString().slice(0, 10);
 
   const listGames = useListGames({
     mutation: {
@@ -59,72 +70,84 @@ export function StepPickGames({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handleRetry = () => {
-    listGames.mutate({ data: credentials });
-  };
+  const handleRetry = () => listGames.mutate({ data: credentials });
 
-  const handleToggleAll = (checked: boolean) => {
+  const handleToggleAll = (checked: boolean) =>
     setSelectedGames(checked ? games.map((g) => g.appId) : []);
-  };
 
-  const handleToggleGame = (appId: number, checked: boolean) => {
+  const handleToggleGame = (appId: number, checked: boolean) =>
     setSelectedGames(
       checked ? [...selectedGames, appId] : selectedGames.filter((id) => id !== appId)
     );
+
+  const fetchTotals = async (appId: number) => {
+    setTotals((t) => ({ ...t, [appId]: { loading: true } }));
+    try {
+      const resp = await fetch(`${import.meta.env.BASE_URL}api/games/totals`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...credentials, appId }),
+      });
+      const json = (await resp.json()) as {
+        wishlists?: number;
+        impressions?: number;
+        visits?: number;
+        errors?: string[];
+        message?: string;
+      };
+      if (!resp.ok) {
+        setTotals((t) => ({ ...t, [appId]: { loading: false, error: json.message || `HTTP ${resp.status}` } }));
+        return;
+      }
+      setTotals((t) => ({
+        ...t,
+        [appId]: {
+          loading: false,
+          data: {
+            wishlists: json.wishlists ?? 0,
+            impressions: json.impressions ?? 0,
+            visits: json.visits ?? 0,
+            errors: json.errors ?? [],
+          },
+        },
+      }));
+    } catch (e) {
+      setTotals((t) => ({ ...t, [appId]: { loading: false, error: (e as Error).message } }));
+    }
+  };
+
+  const handleToggleExpand = (appId: number) => {
+    const willOpen = !expanded[appId];
+    setExpanded((e) => ({ ...e, [appId]: willOpen }));
+    if (willOpen && !totals[appId]) {
+      void fetchTotals(appId);
+    }
   };
 
   const handleManualAdd = () => {
     setManualError("");
-    const parts = manualInput
-      .split(/[\s,;\n]+/)
-      .map((s) => s.trim())
-      .filter(Boolean);
+    const parts = manualInput.split(/[\s,;\n]+/).map((s) => s.trim()).filter(Boolean);
 
     const newGames: GameInfo[] = [];
     for (const part of parts) {
       const id = parseInt(part, 10);
       if (isNaN(id) || id <= 0) {
-        setManualError(`"${part}" is not a valid App ID. Enter numeric Steam App IDs only.`);
+        setManualError(`"${part}" is not a valid App ID.`);
         return;
       }
       if (!games.find((g) => g.appId === id)) {
         newGames.push({ appId: id, name: `App ${id}`, type: "game" });
       }
     }
-
     if (newGames.length === 0) {
       setManualError("All those App IDs are already in the list.");
       return;
     }
-
     const updated = [...games, ...newGames];
     setGames(updated);
     setSelectedGames([...selectedGames, ...newGames.map((g) => g.appId)]);
     setManualInput("");
     setManualMode(false);
-  };
-
-  const handleProbe = async () => {
-    const appId = selectedGames[0] ?? games[0]?.appId;
-    if (!appId) return;
-    setProbeLoading(true);
-    setProbeError("");
-    setProbeResults(null);
-    setProbeOpen(true);
-    try {
-      const resp = await fetch("/api/pull/probe", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...credentials, appId, granularity }),
-      });
-      const json = await resp.json() as { results?: ProbeResult[]; message?: string };
-      if (!resp.ok) throw new Error(json.message || `HTTP ${resp.status}`);
-      setProbeResults(json.results ?? []);
-    } catch (e) {
-      setProbeError((e as Error).message);
-    } finally {
-      setProbeLoading(false);
-    }
   };
 
   const noGamesFound = !listGames.isPending && !listGames.isError && games.length === 0;
@@ -147,7 +170,7 @@ export function StepPickGames({
           <AlertTriangle className="h-8 w-8 text-destructive" />
           <p className="text-sm text-destructive font-medium">Failed to load games</p>
           <p className="text-xs text-muted-foreground text-center max-w-sm">
-            Your session may have expired. Go back and re-paste fresh cookies, or enter your App IDs manually below.
+            Your Steam session may have expired. Sign out and sign back in, or enter your App IDs manually.
           </p>
           <div className="flex gap-3">
             <Button variant="outline" size="sm" onClick={handleRetry}>
@@ -163,22 +186,35 @@ export function StepPickGames({
     );
   }
 
+  const dateRanges: { id: PullRequestGranularity; label: string; desc: string }[] = [
+    { id: "today" as PullRequestGranularity, label: "Today", desc: "Just today" },
+    { id: "previous-month" as PullRequestGranularity, label: "Previous Month", desc: "Last calendar month" },
+    { id: "previous-year" as PullRequestGranularity, label: "Previous Year", desc: "Last calendar year" },
+    { id: "lifetime" as PullRequestGranularity, label: "Lifetime", desc: "Since launch" },
+    { id: "custom" as PullRequestGranularity, label: "Custom", desc: "Pick your own range" },
+  ];
+
+  const customInvalid =
+    granularity === ("custom" as PullRequestGranularity) &&
+    !!customStartIso &&
+    !!customEndIso &&
+    customStartIso > customEndIso;
+
   return (
     <Card className="w-full bg-card border-card-border shadow-lg animate-in fade-in slide-in-from-bottom-4">
       <CardHeader>
         <CardTitle className="text-xl">2. Pick Games & Range</CardTitle>
-        <CardDescription>Select the base games and time range for your export.</CardDescription>
+        <CardDescription>Select the base games and time range for your export. Click a game row to see its lifetime totals.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-8">
 
-        {/* No games warning */}
         {noGamesFound && !manualMode && (
           <Alert className="border-yellow-600/40 bg-yellow-950/20">
             <AlertTriangle className="h-4 w-4 text-yellow-500" />
             <AlertDescription className="ml-2 text-sm">
               <span className="font-medium text-yellow-400">No games found automatically.</span>{" "}
               <span className="text-muted-foreground">
-                Steamworks may have changed its page layout. You can retry, or enter your Steam App IDs directly.
+                Steamworks may have changed its page layout. You can retry, or enter your App IDs directly.
               </span>
               <div className="flex gap-3 mt-3">
                 <Button variant="outline" size="sm" onClick={handleRetry} disabled={listGames.isPending}>
@@ -192,12 +228,10 @@ export function StepPickGames({
           </Alert>
         )}
 
-        {/* Manual entry panel */}
         {manualMode && (
           <ManualEntry manualInput={manualInput} setManualInput={setManualInput} manualError={manualError} onAdd={handleManualAdd} onCancel={games.length > 0 ? () => setManualMode(false) : undefined} />
         )}
 
-        {/* Game list */}
         {games.length > 0 && (
           <div className="space-y-4">
             <div className="flex items-center justify-between">
@@ -222,31 +256,69 @@ export function StepPickGames({
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-[300px] overflow-y-auto p-1">
-              {games.map((game) => (
-                <div
-                  key={game.appId}
-                  data-testid={`game-row-${game.appId}`}
-                  className="flex items-start space-x-3 p-3 rounded-md border border-border bg-background/50 hover:bg-background transition-colors"
-                >
-                  <Checkbox
-                    id={`game-${game.appId}`}
-                    data-testid={`checkbox-game-${game.appId}`}
-                    checked={selectedGames.includes(game.appId)}
-                    onCheckedChange={(c) => handleToggleGame(game.appId, !!c)}
-                    className="mt-0.5"
-                  />
-                  <div className="grid gap-1 leading-none min-w-0">
-                    <label
-                      htmlFor={`game-${game.appId}`}
-                      className="text-sm font-medium leading-none cursor-pointer truncate"
-                    >
-                      {game.name}
-                    </label>
-                    <p className="text-xs text-muted-foreground font-mono">AppID: {game.appId}</p>
+            <div className="space-y-2 max-h-[360px] overflow-y-auto p-1">
+              {games.map((game) => {
+                const isOpen = !!expanded[game.appId];
+                const t = totals[game.appId];
+                return (
+                  <div
+                    key={game.appId}
+                    data-testid={`game-row-${game.appId}`}
+                    className="rounded-md border border-border bg-background/50 overflow-hidden"
+                  >
+                    <div className="flex items-start gap-3 p-3 hover:bg-background transition-colors">
+                      <Checkbox
+                        id={`game-${game.appId}`}
+                        data-testid={`checkbox-game-${game.appId}`}
+                        checked={selectedGames.includes(game.appId)}
+                        onCheckedChange={(c) => handleToggleGame(game.appId, !!c)}
+                        className="mt-0.5"
+                      />
+                      <button
+                        type="button"
+                        className="flex-1 min-w-0 text-left flex items-start gap-2"
+                        onClick={() => handleToggleExpand(game.appId)}
+                        data-testid={`button-expand-${game.appId}`}
+                      >
+                        <span className="mt-0.5 text-muted-foreground">
+                          {isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                        </span>
+                        <span className="grid gap-1 leading-none min-w-0">
+                          <span className="text-sm font-medium leading-none truncate">{game.name}</span>
+                          <span className="text-xs text-muted-foreground font-mono">AppID: {game.appId}</span>
+                        </span>
+                      </button>
+                    </div>
+                    {isOpen && (
+                      <div
+                        className="border-t border-border/60 bg-background/30 px-4 py-3"
+                        data-testid={`totals-${game.appId}`}
+                      >
+                        {t?.loading && (
+                          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" /> Fetching lifetime totals…
+                          </div>
+                        )}
+                        {t?.error && (
+                          <div className="text-xs text-destructive">Couldn't load totals: {t.error}</div>
+                        )}
+                        {t?.data && (
+                          <div className="grid grid-cols-3 gap-3 text-center">
+                            <Stat label="Total Wishlists" value={t.data.wishlists} />
+                            <Stat label="Total Impressions" value={t.data.impressions} />
+                            <Stat label="Total Visits" value={t.data.visits} />
+                          </div>
+                        )}
+                        {t?.data && t.data.errors.length > 0 && (
+                          <div className="mt-2 text-[11px] text-yellow-500/80">
+                            {t.data.errors.length} metric{t.data.errors.length === 1 ? "" : "s"} unavailable
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
 
             {skipped.length > 0 && (
@@ -257,20 +329,14 @@ export function StepPickGames({
           </div>
         )}
 
-        {/* Date range */}
         <div className="space-y-4">
           <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Date Range</h3>
           <RadioGroup
             value={granularity}
             onValueChange={(val) => setGranularity(val as PullRequestGranularity)}
-            className="grid grid-cols-2 md:grid-cols-4 gap-3"
+            className="grid grid-cols-2 md:grid-cols-5 gap-3"
           >
-            {[
-              { id: "today", label: "Today", desc: "Just today" },
-              { id: "previous-month", label: "Previous Month", desc: "Last calendar month" },
-              { id: "previous-year", label: "Previous Year", desc: "Last calendar year" },
-              { id: "lifetime", label: "Lifetime", desc: "Since launch" },
-            ].map((range) => (
+            {dateRanges.map((range) => (
               <div key={range.id}>
                 <RadioGroupItem
                   value={range.id}
@@ -280,99 +346,61 @@ export function StepPickGames({
                 />
                 <Label
                   htmlFor={`range-${range.id}`}
-                  className="flex flex-col items-center justify-between rounded-md border-2 border-muted bg-background p-4 hover:bg-muted hover:text-foreground peer-data-[state=checked]:border-primary peer-data-[state=checked]:text-primary cursor-pointer transition-all"
+                  className="flex flex-col items-center justify-between rounded-md border-2 border-muted bg-background p-4 hover:bg-muted hover:text-foreground peer-data-[state=checked]:border-primary peer-data-[state=checked]:text-primary cursor-pointer transition-all h-full"
                 >
                   <span className="text-sm font-bold uppercase">{range.label}</span>
-                  <span className="text-xs text-muted-foreground mt-1">{range.desc}</span>
+                  <span className="text-xs text-muted-foreground mt-1 text-center">{range.desc}</span>
                 </Label>
               </div>
             ))}
           </RadioGroup>
-        </div>
 
-        {/* Diagnostic probe */}
-        {(games.length > 0 || selectedGames.length > 0) && (
-          <div className="border-t border-border/50 pt-4">
-            <div className="flex items-center justify-between">
+          {granularity === ("custom" as PullRequestGranularity) && (
+            <div className="rounded-md border border-border bg-background/30 p-4 space-y-3" data-testid="custom-range-picker">
               <p className="text-xs text-muted-foreground">
-                If stats come back empty, run a quick endpoint probe to see what Steamworks actually returns.
+                Pick a start and end date. Both are capped at today.
               </p>
-              <Button
-                variant="outline"
-                size="sm"
-                className="ml-4 shrink-0 text-xs"
-                onClick={handleProbe}
-                disabled={probeLoading || (selectedGames.length === 0 && games.length === 0)}
-              >
-                {probeLoading ? (
-                  <><Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> Probing...</>
-                ) : (
-                  <><FlaskConical className="h-3.5 w-3.5 mr-1.5" /> Probe Stats Endpoints</>
-                )}
-              </Button>
-            </div>
-
-            {probeOpen && (
-              <div className="mt-4 space-y-2">
-                <div className="flex items-center justify-between">
-                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                    Probe Results — AppID {selectedGames[0] ?? games[0]?.appId}
-                  </p>
-                  <Button variant="ghost" size="sm" className="h-6 text-xs" onClick={() => setProbeOpen(false)}>
-                    Hide
-                  </Button>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <Label htmlFor="custom-start" className="text-xs">Start date</Label>
+                  <Input
+                    id="custom-start"
+                    type="date"
+                    max={today}
+                    value={customStartIso}
+                    onChange={(e) => setCustomStartIso(e.target.value)}
+                    data-testid="input-custom-start"
+                  />
                 </div>
-                {probeError && (
-                  <p className="text-xs text-destructive">{probeError}</p>
-                )}
-                {probeResults && (
-                  <div className="rounded-md border border-border overflow-hidden text-xs font-mono">
-                    <div className="grid grid-cols-[140px_60px_80px_1fr] bg-muted/50 px-3 py-1.5 font-sans font-semibold text-muted-foreground border-b border-border">
-                      <span>Endpoint</span>
-                      <span>HTTP</span>
-                      <span>Rows found</span>
-                      <span>Body snippet</span>
-                    </div>
-                    {probeResults.map((r, i) => (
-                      <div
-                        key={i}
-                        className="grid grid-cols-[140px_60px_80px_1fr] px-3 py-2 border-b border-border/50 last:border-0 items-start gap-2 hover:bg-muted/20 transition-colors"
-                      >
-                        <span className="text-foreground truncate" title={r.metric}>{r.metric}</span>
-                        <span className={r.status >= 200 && r.status < 300 ? "text-green-400" : "text-destructive"}>
-                          {r.status || "err"}
-                        </span>
-                        <span className="flex items-center gap-1">
-                          {r.parsedRowCount > 0 ? (
-                            <><CheckCircle2 className="h-3 w-3 text-green-400 shrink-0" />{r.parsedRowCount}</>
-                          ) : (
-                            <><XCircle className="h-3 w-3 text-muted-foreground shrink-0" />0</>
-                          )}
-                        </span>
-                        <span
-                          className="text-muted-foreground truncate leading-tight"
-                          title={r.bodySnippet}
-                        >
-                          {r.bodySnippet.slice(0, 120)}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                {probeResults && probeResults.every((r) => r.parsedRowCount === 0) && (
-                  <Alert className="border-orange-600/40 bg-orange-950/20">
-                    <AlertTriangle className="h-4 w-4 text-orange-400" />
-                    <AlertDescription className="ml-2 text-xs text-muted-foreground">
-                      All endpoints returned 0 rows. The body snippets above show what Steamworks is actually sending back — share them so the scraper can be updated to match.
-                    </AlertDescription>
-                  </Alert>
-                )}
+                <div className="space-y-1">
+                  <Label htmlFor="custom-end" className="text-xs">End date</Label>
+                  <Input
+                    id="custom-end"
+                    type="date"
+                    max={today}
+                    value={customEndIso}
+                    onChange={(e) => setCustomEndIso(e.target.value)}
+                    data-testid="input-custom-end"
+                  />
+                </div>
               </div>
-            )}
-          </div>
-        )}
+              {customInvalid && (
+                <p className="text-xs text-destructive">Start date must be on or before end date.</p>
+              )}
+            </div>
+          )}
+        </div>
       </CardContent>
     </Card>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="flex flex-col items-center">
+      <span className="text-xs text-muted-foreground uppercase tracking-wider">{label}</span>
+      <span className="text-lg font-bold text-primary tabular-nums">{value.toLocaleString()}</span>
+    </div>
   );
 }
 

@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Download, AlertCircle, FileDown, RefreshCw, XCircle } from "lucide-react";
+import { Download, AlertCircle, FileDown, RefreshCw, XCircle, LogIn } from "lucide-react";
 import { 
   useStartPull, 
   useGetPullStatus, 
@@ -11,17 +11,18 @@ import {
   useCancelPull,
   type PullRequestGranularity
 } from "@workspace/api-client-react";
-import { TutorialPanel } from "./TutorialPanel";
 import { useQueryClient } from "@tanstack/react-query";
 
 interface StepPullProps {
   credentials: { sessionid: string; steamLoginSecure: string; partnerSessionid: string; partnerSteamLoginSecure: string };
   selectedGames: number[];
   granularity: PullRequestGranularity;
+  customStartIso?: string;
+  customEndIso?: string;
   onReset: () => void;
 }
 
-export function StepPull({ credentials, selectedGames, granularity, onReset }: StepPullProps) {
+export function StepPull({ credentials, selectedGames, granularity, customStartIso, customEndIso, onReset }: StepPullProps) {
   const [jobId, setJobId] = useState<string | null>(null);
   const queryClient = useQueryClient();
 
@@ -62,7 +63,10 @@ export function StepPull({ credentials, selectedGames, granularity, onReset }: S
       data: {
         ...credentials,
         appIds: selectedGames,
-        granularity
+        granularity,
+        ...(granularity === ("custom" as PullRequestGranularity) && customStartIso && customEndIso
+          ? { customStartIso, customEndIso }
+          : {}),
       }
     });
   };
@@ -165,18 +169,19 @@ export function StepPull({ credentials, selectedGames, granularity, onReset }: S
             {isSessionExpired && (
               <Alert variant="destructive" className="bg-destructive/10 border-destructive/20 text-destructive">
                 <AlertCircle className="h-4 w-4" />
-                <AlertTitle>Session Expired</AlertTitle>
+                <AlertTitle>Steam session expired</AlertTitle>
                 <AlertDescription className="mt-2 flex flex-col space-y-3">
-                  <p>Your Steam cookies have expired mid-pull.</p>
-                  <div className="flex space-x-3">
-                    <Button size="sm" variant="outline" className="border-destructive/30 hover:bg-destructive/20 text-destructive" onClick={onReset}>
-                      Paste Fresh Cookies
+                  <p>Your saved Steam session expired mid-pull. Sign back in to continue.</p>
+                  <div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="border-destructive/30 hover:bg-destructive/20 text-destructive"
+                      onClick={onReset}
+                      data-testid="button-sign-in-again"
+                    >
+                      <LogIn className="mr-2 h-4 w-4" /> Sign in to Steam again
                     </Button>
-                    <TutorialPanel>
-                      <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive/80">
-                        Help me find them
-                      </Button>
-                    </TutorialPanel>
                   </div>
                 </AlertDescription>
               </Alert>

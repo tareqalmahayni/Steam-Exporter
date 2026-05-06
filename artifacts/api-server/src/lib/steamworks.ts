@@ -1104,10 +1104,11 @@ async function fetchSales(
   steamLoginSecure: string,
   granularity: string,
   partnerSessionid?: string,
-  partnerSteamLoginSecure?: string
+  partnerSteamLoginSecure?: string,
+  customRange?: { startIso: string; endIso: string }
 ): Promise<StatRow[]> {
   try {
-    const { startIso, endIso } = getDateRangeIso(granularity);
+    const { startIso, endIso } = getDateRangeIso(granularity, customRange);
     const url = `${BASE_PARTNER}/app/details/${appId}/?dateStart=${startIso}&dateEnd=${endIso}`;
     const html = await fetchPartnerHtml("sales", url, sessionid, steamLoginSecure, partnerSessionid, partnerSteamLoginSecure);
     if (!html) return [];
@@ -1303,6 +1304,79 @@ export function clearStatsCache() {
   trafficStatsCache.clear();
 }
 
+/**
+ * Lightweight totals fetch for the picker reveal panel: lifetime
+ * Wishlists / Impressions / Visits for one game. Reuses the same
+ * parsers as the full pull so a break in one of the metric modules
+ * doesn't kill the totals call.
+ */
+export interface GameTotals {
+  wishlists: number;
+  impressions: number;
+  visits: number;
+  errors: string[];
+}
+
+function parseNumberLoose(v: unknown): number {
+  if (v == null) return 0;
+  const s = String(v).replace(/[^0-9.\-]/g, "");
+  if (!s) return 0;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function sumColumn(rows: StatRow[] | undefined, keys: string[]): number {
+  if (!rows || rows.length === 0) return 0;
+  // Prefer the most recent "balance" / "total"-style column when present
+  // (running total) — otherwise sum the per-row deltas.
+  const balanceKey = keys.find((k) => /balance|total/i.test(k));
+  if (balanceKey) {
+    for (let i = rows.length - 1; i >= 0; i--) {
+      const v = parseNumberLoose(rows[i][balanceKey]);
+      if (v) return v;
+    }
+  }
+  let total = 0;
+  for (const row of rows) {
+    for (const k of keys) {
+      if (k in row) total += parseNumberLoose(row[k]);
+    }
+  }
+  return total;
+}
+
+export async function fetchGameTotals(
+  appId: number,
+  sessionid: string,
+  steamLoginSecure: string,
+  partnerSessionid?: string,
+  partnerSteamLoginSecure?: string,
+): Promise<GameTotals> {
+  const errors: string[] = [];
+  const result: GameTotals = { wishlists: 0, impressions: 0, visits: 0, errors };
+
+  // Wishlists — lifetime balance
+  try {
+    const wl = await fetchWishlists(appId, sessionid, steamLoginSecure, "lifetime", partnerSessionid, partnerSteamLoginSecure);
+    result.wishlists = sumColumn(wl, ["balance", "adds"]);
+  } catch (e) {
+    if ((e as Error).message === "session_expired") throw e;
+    errors.push(`wishlists: ${(e as Error).message}`);
+  }
+
+  // Visits + impressions — lifetime sums from navtrafficstats
+  try {
+    const v = await fetchVisits(appId, sessionid, steamLoginSecure, "lifetime", partnerSessionid, partnerSteamLoginSecure);
+    result.visits = sumColumn(v, ["visits", "unique_visitors"]);
+    result.impressions = sumColumn(v, ["impressions"]);
+  } catch (e) {
+    if ((e as Error).message === "session_expired") throw e;
+    errors.push(`visits/impressions: ${(e as Error).message}`);
+  }
+
+  return result;
+}
+
 async function fetchReviews(
   appId: number,
 ): Promise<{ positive: number; negative: number; score: string } | null> {
@@ -1428,7 +1502,8 @@ export async function pullAllStats(
   onProgress: ProgressCallback,
   isCancelled: CancelCheck,
   partnerSessionid?: string,
-  partnerSteamLoginSecure?: string
+  partnerSteamLoginSecure?: string,
+  customRange?: { startIso: string; endIso: string }
 ): Promise<GameStats[]> {
   const results: GameStats[] = [];
   const METRICS = ["Wishlists", "Visits", "Traffic Breakdown", "Sales", "Followers", "Reviews"];
@@ -1474,7 +1549,7 @@ export async function pullAllStats(
       if (isCancelled()) break;
       report("Sales");
       try {
-        stats.salesData = await fetchSales(appId, sessionid, steamLoginSecure, granularity, partnerSessionid, partnerSteamLoginSecure);
+        stats.salesData = await fetchSales(appId, sessionid, steamLoginSecure, granularity, partnerSessionid, partnerSteamLoginSecure, customRange);
       } catch {
         stats.salesData = [];
         errors.push("Sales data unavailable");

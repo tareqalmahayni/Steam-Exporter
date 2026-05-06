@@ -11,6 +11,8 @@ export * from "./connectionResult";
 export * from "./errorResponse";
 export * from "./gameInfo";
 export * from "./gamesListResult";
+export * from "./gameTotalsRequest";
+export * from "./gameTotalsResult";
 export * from "./healthStatus";
 export * from "./pullProgressItem";
 export * from "./pullRequest";

@@ -20,6 +20,8 @@ import type {
   ConnectionCredentials,
   ConnectionResult,
   ErrorResponse,
+  GameTotalsRequest,
+  GameTotalsResult,
   GamesListResult,
   HealthStatus,
   PullRequest,
@@ -285,6 +287,93 @@ export const useListGames = <
   TContext
 > => {
   return useMutation(getListGamesMutationOptions(options));
+};
+
+/**
+ * Returns lifetime Total Wishlists, Total Impressions, and Total Visits for one game. Used by the picker reveal panel.
+ * @summary Get lifetime totals for a single game
+ */
+export const getGetGameTotalsUrl = () => {
+  return `/api/games/totals`;
+};
+
+export const getGameTotals = async (
+  gameTotalsRequest: GameTotalsRequest,
+  options?: RequestInit,
+): Promise<GameTotalsResult> => {
+  return customFetch<GameTotalsResult>(getGetGameTotalsUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(gameTotalsRequest),
+  });
+};
+
+export const getGetGameTotalsMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof getGameTotals>>,
+    TError,
+    { data: BodyType<GameTotalsRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof getGameTotals>>,
+  TError,
+  { data: BodyType<GameTotalsRequest> },
+  TContext
+> => {
+  const mutationKey = ["getGameTotals"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof getGameTotals>>,
+    { data: BodyType<GameTotalsRequest> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return getGameTotals(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type GetGameTotalsMutationResult = NonNullable<
+  Awaited<ReturnType<typeof getGameTotals>>
+>;
+export type GetGameTotalsMutationBody = BodyType<GameTotalsRequest>;
+export type GetGameTotalsMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Get lifetime totals for a single game
+ */
+export const useGetGameTotals = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof getGameTotals>>,
+    TError,
+    { data: BodyType<GameTotalsRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof getGameTotals>>,
+  TError,
+  { data: BodyType<GameTotalsRequest> },
+  TContext
+> => {
+  return useMutation(getGetGameTotalsMutationOptions(options));
 };
 
 /**

@@ -52,6 +52,25 @@ export interface GamesListResult {
   skipped: GameInfo[];
 }
 
+export interface GameTotalsRequest {
+  sessionid: string;
+  steamLoginSecure: string;
+  partnerSessionid: string;
+  partnerSteamLoginSecure: string;
+  appId: number;
+}
+
+export interface GameTotalsResult {
+  appId: number;
+  /** Total lifetime wishlist balance */
+  wishlists: number;
+  /** Total lifetime store-page impressions */
+  impressions: number;
+  /** Total lifetime store-page visits */
+  visits: number;
+  errors: string[];
+}
+
 /**
  * Time granularity for the pull
  */

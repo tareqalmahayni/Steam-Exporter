@@ -88,6 +88,26 @@ export const ListGamesResponse = zod.object({
 });
 
 /**
+ * Returns lifetime Total Wishlists, Total Impressions, and Total Visits for one game. Used by the picker reveal panel.
+ * @summary Get lifetime totals for a single game
+ */
+export const GetGameTotalsBody = zod.object({
+  sessionid: zod.string(),
+  steamLoginSecure: zod.string(),
+  partnerSessionid: zod.string(),
+  partnerSteamLoginSecure: zod.string(),
+  appId: zod.number(),
+});
+
+export const GetGameTotalsResponse = zod.object({
+  appId: zod.number(),
+  wishlists: zod.number().describe("Total lifetime wishlist balance"),
+  impressions: zod.number().describe("Total lifetime store-page impressions"),
+  visits: zod.number().describe("Total lifetime store-page visits"),
+  errors: zod.array(zod.string()),
+});
+
+/**
  * Initiates a data pull for selected games and returns a job ID
  * @summary Start a data pull job
  */

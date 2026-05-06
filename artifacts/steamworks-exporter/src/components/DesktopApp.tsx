@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Loader2, LogIn, AlertTriangle } from "lucide-react";
@@ -21,6 +21,10 @@ const EMPTY: Credentials = {
   partnerSteamLoginSecure: "",
 };
 
+function isFullCreds(c: Credentials): boolean {
+  return !!(c.sessionid && c.steamLoginSecure && c.partnerSessionid && c.partnerSteamLoginSecure);
+}
+
 export function DesktopApp() {
   const [credentials, setCredentials] = useState<Credentials>(EMPTY);
   const [publisherName, setPublisherName] = useState<string | null>(null);
@@ -31,6 +35,9 @@ export function DesktopApp() {
   const [granularity, setGranularity] = useState<PullRequestGranularity>(
     "previous-month" as PullRequestGranularity
   );
+  const [customStartIso, setCustomStartIso] = useState<string>("");
+  const [customEndIso, setCustomEndIso] = useState<string>("");
+  const [autoLoginChecked, setAutoLoginChecked] = useState(false);
 
   const testConn = useTestConnection({
     mutation: {
@@ -41,18 +48,39 @@ export function DesktopApp() {
       },
       onError: () => {
         setLoginError(
-          "Steam accepted the login but we couldn't reach your publisher account. Please try again."
+          "Steam accepted the login but we couldn't reach your publisher account. Please sign in again."
         );
+        // Stored cookies are stale — wipe them so next launch shows the login screen cleanly.
+        window.desktop?.clearStoredSteamCookies?.();
+        setCredentials(EMPTY);
       },
     },
   });
 
+  // On launch: try to reuse cookies from a prior session so the user can
+  // skip the login screen entirely. testConnection acts as the validity check.
+  const triedAutoLogin = useRef(false);
+  useEffect(() => {
+    if (triedAutoLogin.current || !window.desktop) {
+      setAutoLoginChecked(true);
+      return;
+    }
+    triedAutoLogin.current = true;
+    (async () => {
+      try {
+        const stored = await window.desktop!.getStoredSteamCookies();
+        if (stored && isFullCreds(stored)) {
+          setCredentials(stored);
+        }
+      } finally {
+        setAutoLoginChecked(true);
+      }
+    })();
+  }, []);
+
   useEffect(() => {
     if (
-      credentials.sessionid &&
-      credentials.steamLoginSecure &&
-      credentials.partnerSessionid &&
-      credentials.partnerSteamLoginSecure &&
+      isFullCreds(credentials) &&
       !publisherName &&
       !testConn.isPending
     ) {
@@ -69,12 +97,7 @@ export function DesktopApp() {
       const result = await window.desktop.loginToSteam();
       if ("cancelled" in result) {
         setLoginError("Login window was closed before sign-in completed.");
-      } else if (
-        !result.sessionid ||
-        !result.steamLoginSecure ||
-        !result.partnerSessionid ||
-        !result.partnerSteamLoginSecure
-      ) {
+      } else if (!isFullCreds(result)) {
         setLoginError(
           "Signed in, but Steam didn't issue cookies for both partner.steamgames.com and partner.steampowered.com. Try opening both pages in the login window before closing it."
         );
@@ -88,12 +111,17 @@ export function DesktopApp() {
     }
   };
 
-  const handleSignOut = () => {
+  const handleSignOut = async () => {
     setCredentials(EMPTY);
     setPublisherName(null);
     setSelectedGames([]);
     setStep(1);
+    if (window.desktop?.clearStoredSteamCookies) {
+      await window.desktop.clearStoredSteamCookies();
+    }
   };
+
+  const showAutoLoginSpinner = !autoLoginChecked || (testConn.isPending && step === 1 && !publisherName);
 
   return (
     <div className="min-h-[100dvh] w-full flex flex-col bg-background text-foreground font-sans">
@@ -123,37 +151,46 @@ export function DesktopApp() {
           <Card className="w-full bg-card border-card-border shadow-lg">
             <CardContent className="flex flex-col items-center justify-center py-16 space-y-6 text-center">
               <div className="h-16 w-16 rounded-full bg-primary/10 flex items-center justify-center">
-                <LogIn className="h-8 w-8 text-primary" />
+                {showAutoLoginSpinner ? (
+                  <Loader2 className="h-8 w-8 text-primary animate-spin" />
+                ) : (
+                  <LogIn className="h-8 w-8 text-primary" />
+                )}
               </div>
               <div>
-                <h2 className="text-xl font-bold mb-2">Sign in to Steamworks</h2>
+                <h2 className="text-xl font-bold mb-2">
+                  {showAutoLoginSpinner ? "Restoring your session…" : "Sign in to Steamworks"}
+                </h2>
                 <p className="text-sm text-muted-foreground max-w-md">
-                  A Steam login window will open. Sign in with your usual
-                  publisher account (including 2FA). The app reads the session
-                  cookies locally — nothing is sent to any third-party server.
+                  {showAutoLoginSpinner
+                    ? "Checking for a saved Steam session from your last visit."
+                    : "A Steam login window will open. Sign in with your usual publisher account (including 2FA). The app reads the session cookies locally — nothing is sent to any third-party server. Your session is remembered for next time."}
                 </p>
               </div>
-              <Button
-                size="lg"
-                onClick={handleLogin}
-                disabled={loginPending || testConn.isPending}
-                className="min-w-[220px]"
-              >
-                {loginPending ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Waiting for sign-in…
-                  </>
-                ) : testConn.isPending ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Verifying…
-                  </>
-                ) : (
-                  <>
-                    <LogIn className="mr-2 h-4 w-4" /> Open Steam login
-                  </>
-                )}
-              </Button>
-              {loginError && (
+              {!showAutoLoginSpinner && (
+                <Button
+                  size="lg"
+                  onClick={handleLogin}
+                  disabled={loginPending || testConn.isPending}
+                  className="min-w-[220px]"
+                  data-testid="button-open-steam-login"
+                >
+                  {loginPending ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Waiting for sign-in…
+                    </>
+                  ) : testConn.isPending ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Verifying…
+                    </>
+                  ) : (
+                    <>
+                      <LogIn className="mr-2 h-4 w-4" /> Open Steam login
+                    </>
+                  )}
+                </Button>
+              )}
+              {loginError && !showAutoLoginSpinner && (
                 <Alert className="max-w-md text-left border-destructive/40 bg-destructive/10">
                   <AlertTriangle className="h-4 w-4 text-destructive" />
                   <AlertDescription className="ml-2 text-sm text-destructive">
@@ -173,11 +210,20 @@ export function DesktopApp() {
               setSelectedGames={setSelectedGames}
               granularity={granularity}
               setGranularity={setGranularity}
+              customStartIso={customStartIso}
+              setCustomStartIso={setCustomStartIso}
+              customEndIso={customEndIso}
+              setCustomEndIso={setCustomEndIso}
             />
             <div className="flex justify-end">
               <Button
                 onClick={() => setStep(3)}
-                disabled={selectedGames.length === 0}
+                disabled={
+                  selectedGames.length === 0 ||
+                  (granularity === ("custom" as PullRequestGranularity) &&
+                    (!customStartIso || !customEndIso || customStartIso > customEndIso))
+                }
+                data-testid="button-next-pull"
               >
                 Next — Pull data &rarr;
               </Button>
@@ -191,6 +237,8 @@ export function DesktopApp() {
               credentials={credentials}
               selectedGames={selectedGames}
               granularity={granularity}
+              customStartIso={customStartIso}
+              customEndIso={customEndIso}
               onReset={handleSignOut}
             />
             <div className="flex justify-start">

@@ -8,8 +8,6 @@ let serverProcess: ChildProcess | null = null;
 let serverPort: number | null = null;
 
 function resourcesPath(): string {
-  // In packaged builds Electron sets process.resourcesPath. In dev (electron .)
-  // we look one level up from dist/.
   const isPackaged = (app as unknown as { isPackaged: boolean }).isPackaged;
   if (isPackaged) return process.resourcesPath;
   return path.resolve(__dirname, "..", "dist");
@@ -24,7 +22,7 @@ function startServer(): Promise<number> {
     const child = spawn(process.execPath, [entry], {
       env: {
         ...process.env,
-        PORT: "0", // ask Express to pick a free port
+        PORT: "0",
         FRONTEND_DIR: webDir,
         ELECTRON_RUN_AS_NODE: "1",
         NODE_ENV: "production",
@@ -36,7 +34,6 @@ function startServer(): Promise<number> {
 
     let resolved = false;
     const onLine = (line: string) => {
-      // The server prints "LISTENING_ON_PORT=<n>" once it's bound.
       const m = line.match(/LISTENING_ON_PORT=(\d+)/);
       if (m && !resolved) {
         resolved = true;
@@ -53,7 +50,6 @@ function startServer(): Promise<number> {
         onLine(stdoutBuf.slice(0, i));
         stdoutBuf = stdoutBuf.slice(i + 1);
       }
-      // Mirror to console so users can debug from terminal
       process.stdout.write(s);
     });
     child.stderr?.on("data", (d) => process.stderr.write(d));
@@ -113,21 +109,47 @@ async function createWindow(): Promise<void> {
   });
 }
 
+// ─── Steam-cookie helpers ────────────────────────────────────────────────────
+
+type Credentials = {
+  sessionid: string;
+  steamLoginSecure: string;
+  partnerSessionid: string;
+  partnerSteamLoginSecure: string;
+};
+
+async function readSteamCookies(): Promise<Credentials | null> {
+  const loginSession = session.fromPartition("persist:steam-login");
+  const gamesCookies = await loginSession.cookies.get({ domain: "steamgames.com" });
+  const poweredCookies = await loginSession.cookies.get({ domain: "steampowered.com" });
+  const pick = (cookies: Electron.Cookie[], name: string) =>
+    cookies.find((c) => c.name === name)?.value ?? "";
+  const creds: Credentials = {
+    sessionid: pick(gamesCookies, "sessionid"),
+    steamLoginSecure: pick(gamesCookies, "steamLoginSecure"),
+    partnerSessionid: pick(poweredCookies, "sessionid"),
+    partnerSteamLoginSecure: pick(poweredCookies, "steamLoginSecure"),
+  };
+  if (
+    creds.sessionid &&
+    creds.steamLoginSecure &&
+    creds.partnerSessionid &&
+    creds.partnerSteamLoginSecure
+  ) {
+    return creds;
+  }
+  return null;
+}
+
+async function clearSteamCookies(): Promise<void> {
+  const loginSession = session.fromPartition("persist:steam-login");
+  await loginSession.clearStorageData({ storages: ["cookies", "localstorage", "indexdb", "websql"] });
+}
+
 // ─── IPC: Steam login ────────────────────────────────────────────────────────
-//
-// Opens a separate BrowserWindow pointed at the Steamworks login page. The
-// user authenticates normally (including 2FA). Once they reach a logged-in
-// page we read the session cookies for both Steam domains and resolve.
 
 ipcMain.handle("desktop:loginToSteam", async () => {
-  return new Promise<{
-    sessionid: string;
-    steamLoginSecure: string;
-    partnerSessionid: string;
-    partnerSteamLoginSecure: string;
-  } | { cancelled: true }>((resolve) => {
-    const loginSession = session.fromPartition("persist:steam-login");
-
+  return new Promise<Credentials | { cancelled: true }>((resolve) => {
     const win = new BrowserWindow({
       width: 980,
       height: 760,
@@ -147,17 +169,8 @@ ipcMain.handle("desktop:loginToSteam", async () => {
       if (settled) return;
       settled = true;
       try {
-        const gamesCookies = await loginSession.cookies.get({ domain: "steamgames.com" });
-        const poweredCookies = await loginSession.cookies.get({ domain: "steampowered.com" });
-        const pick = (cookies: Electron.Cookie[], name: string) =>
-          cookies.find((c) => c.name === name)?.value ?? "";
-
-        resolve({
-          sessionid: pick(gamesCookies, "sessionid"),
-          steamLoginSecure: pick(gamesCookies, "steamLoginSecure"),
-          partnerSessionid: pick(poweredCookies, "sessionid"),
-          partnerSteamLoginSecure: pick(poweredCookies, "steamLoginSecure"),
-        });
+        const creds = await readSteamCookies();
+        resolve(creds ?? { cancelled: true });
       } catch {
         resolve({ cancelled: true });
       } finally {
@@ -165,15 +178,12 @@ ipcMain.handle("desktop:loginToSteam", async () => {
       }
     };
 
-    // Detect login completion by watching for a navigation away from the login page
-    // to a partner.* URL where session cookies exist.
     win.webContents.on("did-navigate", (_e, url) => {
       if (
         (url.includes("partner.steamgames.com") || url.includes("partner.steampowered.com")) &&
         !url.includes("/login") &&
         !url.includes("login.steampowered.com")
       ) {
-        // Give Steam a moment to finish setting cookies for both domains
         setTimeout(finishWith, 800);
       }
     });
@@ -185,10 +195,29 @@ ipcMain.handle("desktop:loginToSteam", async () => {
       }
     });
 
-    win.loadURL(
-      "https://partner.steamgames.com/home"
-    );
+    win.loadURL("https://partner.steamgames.com/home");
   });
+});
+
+// Returns previously-saved cookies on launch so the user can skip the login
+// screen between sessions. Returns null if no valid set is present.
+ipcMain.handle("desktop:getStoredSteamCookies", async () => {
+  try {
+    return await readSteamCookies();
+  } catch {
+    return null;
+  }
+});
+
+// Wipes the persisted Steam-login partition. Called from the renderer's
+// "Sign out" button.
+ipcMain.handle("desktop:clearStoredSteamCookies", async () => {
+  try {
+    await clearSteamCookies();
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
 });
 
 ipcMain.handle("desktop:isDesktop", async () => true);

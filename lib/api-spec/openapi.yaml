@@ -95,6 +95,38 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /games/totals:
+    post:
+      operationId: getGameTotals
+      tags: [games]
+      summary: Get lifetime totals for a single game
+      description: Returns lifetime Total Wishlists, Total Impressions, and Total Visits for one game. Used by the picker reveal panel.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GameTotalsRequest"
+      responses:
+        "200":
+          description: Lifetime totals
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GameTotalsResult"
+        "401":
+          description: Session expired
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /pull/start:
     post:
       operationId: startPull
@@ -304,6 +336,51 @@ components:
       required:
         - games
         - skipped
+
+    GameTotalsRequest:
+      type: object
+      properties:
+        sessionid:
+          type: string
+        steamLoginSecure:
+          type: string
+        partnerSessionid:
+          type: string
+        partnerSteamLoginSecure:
+          type: string
+        appId:
+          type: integer
+      required:
+        - sessionid
+        - steamLoginSecure
+        - partnerSessionid
+        - partnerSteamLoginSecure
+        - appId
+
+    GameTotalsResult:
+      type: object
+      properties:
+        appId:
+          type: integer
+        wishlists:
+          type: integer
+          description: Total lifetime wishlist balance
+        impressions:
+          type: integer
+          description: Total lifetime store-page impressions
+        visits:
+          type: integer
+          description: Total lifetime store-page visits
+        errors:
+          type: array
+          items:
+            type: string
+      required:
+        - appId
+        - wishlists
+        - impressions
+        - visits
+        - errors
 
     PullRequest:
       type: object

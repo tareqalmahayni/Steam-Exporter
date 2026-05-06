@@ -42,6 +42,8 @@ interface Job {
   partnerSteamLoginSecure: string;
   appIds: number[];
   granularity: string;
+  customStartIso?: string;
+  customEndIso?: string;
 }
 
 const jobs = new Map<string, Job>();
@@ -67,7 +69,23 @@ router.post("/pull/start", async (req, res): Promise<void> => {
     return;
   }
 
-  const { sessionid, steamLoginSecure, partnerSessionid, partnerSteamLoginSecure, appIds, granularity } = parsed.data;
+  const { sessionid, steamLoginSecure, partnerSessionid, partnerSteamLoginSecure, appIds, granularity, customStartIso, customEndIso } = parsed.data;
+
+  if (granularity === "custom") {
+    if (!customStartIso || !customEndIso) {
+      res.status(400).json({ error: "missing_custom_range", message: "customStartIso and customEndIso are required when granularity=custom" });
+      return;
+    }
+    if (customStartIso > customEndIso) {
+      res.status(400).json({ error: "invalid_range", message: "Custom start date must be on or before end date" });
+      return;
+    }
+    const today = new Date().toISOString().slice(0, 10);
+    if (customEndIso > today) {
+      res.status(400).json({ error: "invalid_range", message: "Custom end date cannot be in the future" });
+      return;
+    }
+  }
 
   if (!appIds || appIds.length === 0) {
     res.status(400).json({ error: "no_games", message: "At least one game must be selected" });
@@ -85,6 +103,8 @@ router.post("/pull/start", async (req, res): Promise<void> => {
     partnerSteamLoginSecure,
     appIds,
     granularity,
+    customStartIso,
+    customEndIso,
     createdAt: Date.now(),
   };
 
@@ -119,7 +139,8 @@ router.post("/pull/start", async (req, res): Promise<void> => {
         },
         () => job.cancelled,
         partnerSessionid,
-        partnerSteamLoginSecure
+        partnerSteamLoginSecure,
+        customStartIso && customEndIso ? { startIso: customStartIso, endIso: customEndIso } : undefined
       );
 
       // Log a summary of what was actually collected so we can diagnose empty data
