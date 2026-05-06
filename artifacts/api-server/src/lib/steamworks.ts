@@ -695,13 +695,26 @@ function getDateRange(granularity: string): { start: string; end: string; granSt
  * Same date range but formatted as ISO YYYY-MM-DD with dashes.
  * Required for the partner.steampowered.com URLs which use ?dateStart= / ?dateEnd=.
  */
-export function getDateRangeIso(granularity: string): { startIso: string; endIso: string } {
+export function getDateRangeIso(
+  granularity: string,
+  customRange?: { startIso?: string; endIso?: string },
+): { startIso: string; endIso: string } {
+  // Custom range: caller supplies both ISO dates explicitly. Used by
+  // the bookmarklet's custom date-range picker.
+  if (
+    granularity === "custom" &&
+    customRange?.startIso &&
+    customRange?.endIso
+  ) {
+    return { startIso: customRange.startIso, endIso: customRange.endIso };
+  }
   const now = new Date();
   const fmt = (d: Date) =>
     `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
   const start = new Date(now);
   if (granularity === "weekly") start.setDate(now.getDate() - 7);
   else if (granularity === "monthly") start.setDate(now.getDate() - 30);
+  else if (granularity === "yearly") start.setDate(now.getDate() - 365);
   else if (granularity === "lifetime") start.setFullYear(2003, 0, 1);
   // daily: start = today
   return { startIso: fmt(start), endIso: fmt(now) };

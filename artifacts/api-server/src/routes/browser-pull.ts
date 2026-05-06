@@ -20,6 +20,8 @@ const BASE_PARTNER = "https://partner.steampowered.com";
 interface BrowserJob {
   sessionId: string;
   granularity: string;
+  customStartIso?: string;
+  customEndIso?: string;
   games: GameInfo[];
   htmlCache: Map<string, string>;
   steamgamesSubmitted: boolean;
@@ -34,6 +36,11 @@ interface BrowserJob {
   filename?: string;
   errorMessage?: string;
   createdAt: number;
+}
+
+/** URLs the bookmarklet fetches to show wishlist totals in the picker. */
+function wishlistUrlsFor(games: GameInfo[]): string[] {
+  return games.map((g) => `${BASE_PARTNER}/app/wishlist/${g.appId}/`);
 }
 
 // One active job at a time (single-user tool). Older completed jobs kept by id
@@ -62,14 +69,39 @@ function steamgamesUrlsFor(games: GameInfo[]): string[] {
  * Note: wishlist URL is shared by both `fetchWishlists` and `fetchFollowers`,
  * so we emit it once per game.
  */
-function steampoweredUrlsFor(games: GameInfo[], granularity: string): string[] {
-  const { startIso, endIso } = getDateRangeIso(granularity);
+function steampoweredUrlsFor(
+  games: GameInfo[],
+  granularity: string,
+  customStartIso?: string,
+  customEndIso?: string,
+): string[] {
+  const { startIso, endIso } = getDateRangeIso(granularity, {
+    startIso: customStartIso,
+    endIso: customEndIso,
+  });
   const urls: string[] = [];
   for (const g of games) {
     urls.push(`${BASE_PARTNER}/app/wishlist/${g.appId}/`);
     urls.push(`${BASE_PARTNER}/app/details/${g.appId}/?dateStart=${startIso}&dateEnd=${endIso}`);
   }
   return urls;
+}
+
+/** Sales URLs only (for fetching after user picks games + dates). */
+function salesUrlsFor(
+  games: GameInfo[],
+  granularity: string,
+  customStartIso?: string,
+  customEndIso?: string,
+): string[] {
+  const { startIso, endIso } = getDateRangeIso(granularity, {
+    startIso: customStartIso,
+    endIso: customEndIso,
+  });
+  return games.map(
+    (g) =>
+      `${BASE_PARTNER}/app/details/${g.appId}/?dateStart=${startIso}&dateEnd=${endIso}`,
+  );
 }
 
 // ─── POST /browser-pull/init ────────────────────────────────────────────────
@@ -116,7 +148,7 @@ router.post("/browser-pull/init", (req, res): void => {
     gameCount: games.length,
     games: games.map((g) => ({ appId: g.appId, name: g.name })),
     steamgamesUrls: steamgamesUrlsFor(games),
-    steampoweredUrls: steampoweredUrlsFor(games, granularity),
+    wishlistUrls: wishlistUrlsFor(games),
   });
 });
 
@@ -125,13 +157,25 @@ router.post("/browser-pull/init", (req, res): void => {
 // in-page overlay. Server filters the active job's game list and updates
 // granularity, returning the URL plan computed from those selections.
 router.post("/browser-pull/configure", (req, res): void => {
-  const { sessionId, selectedAppIds, granularity } = (req.body ?? {}) as {
+  const {
+    sessionId,
+    selectedAppIds,
+    granularity,
+    customStartIso,
+    customEndIso,
+  } = (req.body ?? {}) as {
     sessionId?: string;
     selectedAppIds?: number[];
     granularity?: string;
+    customStartIso?: string;
+    customEndIso?: string;
   };
   if (!sessionId || !Array.isArray(selectedAppIds) || !granularity) {
     res.status(400).json({ error: "missing_fields" });
+    return;
+  }
+  if (granularity === "custom" && (!customStartIso || !customEndIso)) {
+    res.status(400).json({ error: "missing_custom_dates" });
     return;
   }
   if (!activeJob || activeJob.sessionId !== sessionId) {
@@ -146,15 +190,16 @@ router.post("/browser-pull/configure", (req, res): void => {
   }
   activeJob.games = filtered;
   activeJob.granularity = granularity;
+  activeJob.customStartIso = customStartIso;
+  activeJob.customEndIso = customEndIso;
   logger.info(
-    { sessionId, gameCount: filtered.length, granularity },
+    { sessionId, gameCount: filtered.length, granularity, customStartIso, customEndIso },
     "browser-pull configured",
   );
   res.json({
     ok: true,
     gameCount: filtered.length,
-    steamgamesUrls: steamgamesUrlsFor(filtered),
-    steampoweredUrls: steampoweredUrlsFor(filtered, granularity),
+    salesUrls: salesUrlsFor(filtered, granularity, customStartIso, customEndIso),
   });
 });
 
@@ -170,8 +215,9 @@ router.get("/browser-pull/active", (_req, res): void => {
     sessionId: activeJob.sessionId,
     status: activeJob.status,
     gameCount: activeJob.games.length,
+    games: activeJob.games.map((g) => ({ appId: g.appId, name: g.name })),
     steamgamesUrls: steamgamesUrlsFor(activeJob.games),
-    steampoweredUrls: steampoweredUrlsFor(activeJob.games, activeJob.granularity),
+    wishlistUrls: wishlistUrlsFor(activeJob.games),
   });
 });
 
