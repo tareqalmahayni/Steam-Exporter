@@ -266,10 +266,10 @@ export function StepPickGames({
             className="grid grid-cols-2 md:grid-cols-4 gap-3"
           >
             {[
-              { id: "daily", label: "Daily", desc: "Last 30 days" },
-              { id: "weekly", label: "Weekly", desc: "Last 12 weeks" },
-              { id: "monthly", label: "Monthly", desc: "Last 12 months" },
-              { id: "lifetime", label: "Lifetime", desc: "All time" },
+              { id: "daily", label: "Daily", desc: "Today" },
+              { id: "weekly", label: "Weekly", desc: "Last 7 days" },
+              { id: "monthly", label: "Monthly", desc: "Last 30 days" },
+              { id: "lifetime", label: "Lifetime", desc: "Since launch" },
             ].map((range) => (
               <div key={range.id}>
                 <RadioGroupItem

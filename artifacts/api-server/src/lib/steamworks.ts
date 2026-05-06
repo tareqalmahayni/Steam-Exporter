@@ -649,16 +649,17 @@ function getDateRange(granularity: string): { start: string; end: string; granSt
   let granStr = "day";
 
   if (granularity === "daily") {
-    start.setDate(now.getDate() - 30);
+    // Today only — start and end are both today
     granStr = "day";
   } else if (granularity === "weekly") {
-    start.setDate(now.getDate() - 84);
-    granStr = "week";
+    start.setDate(now.getDate() - 7);
+    granStr = "day";
   } else if (granularity === "monthly") {
-    start.setDate(now.getDate() - 365);
-    granStr = "month";
+    start.setDate(now.getDate() - 30);
+    granStr = "day";
   } else if (granularity === "lifetime") {
-    start.setFullYear(2003);
+    // Use 2003-01-01 as a safe "beginning of Steam" anchor
+    start.setFullYear(2003, 0, 1);
     granStr = "month";
   }
 
