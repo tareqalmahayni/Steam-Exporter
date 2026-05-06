@@ -48,15 +48,29 @@
       }
     ],
     "mac": {
-      "target": ["dmg", "zip"],
+      "target": [
+        "dmg",
+        "zip"
+      ],
       "category": "public.app-category.developer-tools"
     },
     "win": {
-      "target": ["nsis", "portable"]
+      "target": [
+        "nsis",
+        "portable"
+      ]
     },
     "linux": {
-      "target": ["AppImage", "deb"],
+      "target": [
+        "AppImage",
+        "deb"
+      ],
       "category": "Development"
     }
+  },
+  "author": "Tareq Almahayni",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tareqalmahayni/Steam-Exporter.git"
   }
 }
