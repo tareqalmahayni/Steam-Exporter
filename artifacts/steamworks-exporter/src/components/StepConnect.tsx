@@ -59,7 +59,7 @@ export function StepConnect({ credentials, setCredentials, onSuccess }: StepConn
               type="password"
               placeholder="e.g. abc123def456ghi789jkl012"
               value={credentials.sessionid}
-              onChange={(e) => setCredentials({ ...credentials, sessionid: e.target.trim() })}
+              onChange={(e) => setCredentials({ ...credentials, sessionid: e.target.value })}
               className="font-mono bg-background"
             />
           </div>
@@ -74,7 +74,7 @@ export function StepConnect({ credentials, setCredentials, onSuccess }: StepConn
               type="password"
               placeholder="e.g. 76561198000000000%7C|..."
               value={credentials.steamLoginSecure}
-              onChange={(e) => setCredentials({ ...credentials, steamLoginSecure: e.target.trim() })}
+              onChange={(e) => setCredentials({ ...credentials, steamLoginSecure: e.target.value })}
               className="font-mono bg-background"
             />
           </div>
