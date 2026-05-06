@@ -129,27 +129,100 @@ type Credentials = {
   partnerSteamLoginSecure: string;
 };
 
-async function readSteamCookies(): Promise<Credentials | null> {
+// Cookie domains we care about. partner.steamgames.com is the primary login
+// domain. partner.steampowered.com is where the actual stats URLs live and
+// gets its cookies minted via a JWT-refresh hop the FIRST time you navigate
+// there. steamcommunity.com and store.steampowered.com hold the master Steam
+// session that the JWT-refresh endpoint uses to mint the partner cookies.
+const COOKIE_DOMAINS = [
+  "steamgames.com",
+  "steampowered.com",
+  "steamcommunity.com",
+] as const;
+
+function pickCookie(cookies: Electron.Cookie[], domain: string, name: string): string {
+  // Prefer exact-domain match; fall back to any matching name.
+  const exact = cookies.find(
+    (c) =>
+      c.name === name &&
+      (c.domain === domain || c.domain === `.${domain}`)
+  );
+  if (exact) return exact.value;
+  return cookies.find((c) => c.name === name)?.value ?? "";
+}
+
+/**
+ * Read all Steamworks-related cookies from the persistent partition.
+ *
+ * `requireFull = true` (default for stored-creds path) means we only return
+ * non-null when both the steamgames *and* steampowered cookie pairs are
+ * present. `requireFull = false` (login-window completion path) returns
+ * non-null as soon as the steamgames pair exists — the steampowered cookies
+ * are minted later via a priming navigation.
+ */
+async function readSteamCookies(
+  opts: { requireFull?: boolean } = {}
+): Promise<Credentials | null> {
+  const { requireFull = true } = opts;
   const loginSession = session.fromPartition(STEAM_LOGIN_PARTITION);
-  const gamesCookies = await loginSession.cookies.get({ domain: "steamgames.com" });
-  const poweredCookies = await loginSession.cookies.get({ domain: "steampowered.com" });
-  const pick = (cookies: Electron.Cookie[], name: string) =>
-    cookies.find((c) => c.name === name)?.value ?? "";
-  const creds: Credentials = {
-    sessionid: pick(gamesCookies, "sessionid"),
-    steamLoginSecure: pick(gamesCookies, "steamLoginSecure"),
-    partnerSessionid: pick(poweredCookies, "sessionid"),
-    partnerSteamLoginSecure: pick(poweredCookies, "steamLoginSecure"),
-  };
-  if (
-    creds.sessionid &&
-    creds.steamLoginSecure &&
-    creds.partnerSessionid &&
-    creds.partnerSteamLoginSecure
-  ) {
-    return creds;
+
+  const allCookies: Electron.Cookie[] = [];
+  for (const domain of COOKIE_DOMAINS) {
+    const cookies = await loginSession.cookies.get({ domain });
+    allCookies.push(...cookies);
   }
-  return null;
+
+  const creds: Credentials = {
+    sessionid: pickCookie(allCookies, "partner.steamgames.com", "sessionid"),
+    steamLoginSecure: pickCookie(allCookies, "partner.steamgames.com", "steamLoginSecure"),
+    partnerSessionid: pickCookie(allCookies, "partner.steampowered.com", "sessionid"),
+    partnerSteamLoginSecure: pickCookie(allCookies, "partner.steampowered.com", "steamLoginSecure"),
+  };
+
+  // Diagnostic: where each cookie was found.
+  logSteam("readSteamCookies snapshot:", {
+    steamgames_sessionid: !!creds.sessionid,
+    steamgames_steamLoginSecure: !!creds.steamLoginSecure,
+    steampowered_sessionid: !!creds.partnerSessionid,
+    steampowered_steamLoginSecure: !!creds.partnerSteamLoginSecure,
+    steamcommunity_steamLoginSecure: !!pickCookie(
+      allCookies,
+      "steamcommunity.com",
+      "steamLoginSecure"
+    ),
+  });
+
+  // Primary login domain is non-negotiable: without these the user has not
+  // signed into Steamworks at all.
+  if (!creds.sessionid || !creds.steamLoginSecure) return null;
+
+  // Partner-side cookies are mintable on demand via JWT refresh, so they
+  // are optional for the login-completion path.
+  if (requireFull && (!creds.partnerSessionid || !creds.partnerSteamLoginSecure)) {
+    return null;
+  }
+  return creds;
+}
+
+/**
+ * After the user successfully signs in at partner.steamgames.com we trigger
+ * a one-shot navigation to partner.steampowered.com so Steam's JWT-refresh
+ * flow runs and Set-Cookies the steampowered.com cookie pair into our
+ * partition. Without this, `requireFull=true` reads in the auto-login path
+ * would always return null and the renderer would forever show "Waiting for
+ * sign-in…".
+ */
+async function primePartnerCookies(win: BrowserWindow): Promise<void> {
+  if (win.isDestroyed()) return;
+  logSteam("priming partner.steampowered.com cookies via in-window navigation…");
+  try {
+    await win.loadURL("https://partner.steampowered.com/home");
+    // Tiny grace period for any post-load Set-Cookies to settle.
+    await new Promise((r) => setTimeout(r, 1200));
+    logSteam("priming nav complete");
+  } catch (e) {
+    logSteam("priming nav failed (non-fatal):", (e as Error).message);
+  }
 }
 
 async function clearSteamCookies(): Promise<void> {
@@ -192,16 +265,65 @@ ipcMain.handle("desktop:loginToSteam", async () => {
 
     let settled = false;
     let finishing = false;
+    let lastUrl = "";
+
+    /**
+     * URL is "past login" if it points at any Steamworks dashboard / app
+     * page rather than a login form or OpenID/JWT bounce. We use this as
+     * the primary positive signal — combined with cookies-present — that
+     * the user has actually finished signing in.
+     */
+    const isPastLogin = (url: string): boolean => {
+      if (!url) return false;
+      if (/\/login(\?|\/|$)/.test(url)) return false;
+      if (url.includes("openid")) return false;
+      if (url.includes("login.steampowered.com")) return false;
+      return (
+        url.includes("partner.steamgames.com") ||
+        url.includes("partner.steampowered.com")
+      );
+    };
 
     const tryComplete = async (reason: string) => {
       if (settled || finishing) return;
-      const creds = await readSteamCookies();
+
+      // Need EITHER (cookies present + past-login URL) OR (cookies present
+      // and we've polled enough times). Pure cookie-presence is not enough
+      // because Steam may set sessionid before the user actually signs in
+      // (CSRF tokens are sometimes minted at the login screen too).
+      const creds = await readSteamCookies({ requireFull: false });
       if (!creds) return;
+      if (!isPastLogin(lastUrl) && reason.startsWith("cookie:")) {
+        logSteam("cookie present but URL still on login page —", lastUrl, "— deferring");
+        return;
+      }
+
       finishing = true;
-      logSteam("complete:", reason, "— required cookies present, closing window");
+      logSteam(
+        "primary login detected:",
+        reason,
+        "— priming partner.steampowered.com cookies before resolving"
+      );
+
+      // Mint partner.steampowered.com cookies via a same-window nav. After
+      // this, readSteamCookies({requireFull:true}) typically returns the
+      // full quad; if not, we still resolve with what we have because the
+      // backend's fetchPartnerHtml replicates the JWT-refresh hop itself.
+      await primePartnerCookies(win);
+
+      const finalCreds =
+        (await readSteamCookies({ requireFull: true })) ??
+        (await readSteamCookies({ requireFull: false })) ??
+        creds;
+
+      logSteam("resolving login:", {
+        steamgames: !!finalCreds.steamLoginSecure,
+        steampowered: !!finalCreds.partnerSteamLoginSecure,
+      });
+
       settled = true;
       cleanup();
-      resolve(creds);
+      resolve(finalCreds);
       if (!win.isDestroyed()) win.close();
     };
 
@@ -216,9 +338,11 @@ ipcMain.handle("desktop:loginToSteam", async () => {
       // tryComplete on every analytics/tracking cookie Steam sets.
       const interesting =
         (cookie.name === "sessionid" || cookie.name === "steamLoginSecure") &&
-        (cookie.domain?.includes("steamgames.com") || cookie.domain?.includes("steampowered.com"));
+        (cookie.domain?.includes("steamgames.com") ||
+          cookie.domain?.includes("steampowered.com") ||
+          cookie.domain?.includes("steamcommunity.com"));
       if (!interesting) return;
-      logSteam("cookie set:", cookie.name, cookie.domain);
+      logSteam("cookie set:", cookie.name, "@", cookie.domain);
       void tryComplete(`cookie:${cookie.name}@${cookie.domain}`);
     };
 
@@ -241,14 +365,22 @@ ipcMain.handle("desktop:loginToSteam", async () => {
     // ── Logging: surface every navigation in the login window so packaged
     //    builds are diagnosable without a remote debugger.
     win.webContents.on("did-start-navigation", (_e, url, _isInPlace, isMainFrame) => {
-      if (isMainFrame) logSteam("did-start-navigation →", url);
+      if (isMainFrame) {
+        lastUrl = url;
+        logSteam("did-start-navigation →", url);
+      }
     });
     win.webContents.on("did-navigate", (_e, url) => {
-      logSteam("did-navigate →", url);
+      lastUrl = url;
+      logSteam("did-navigate →", url, "(pastLogin=", isPastLogin(url), ")");
       void tryComplete("did-navigate");
     });
     win.webContents.on("did-navigate-in-page", (_e, url, isMainFrame) => {
-      if (isMainFrame) logSteam("did-navigate-in-page →", url);
+      if (isMainFrame) {
+        lastUrl = url;
+        logSteam("did-navigate-in-page →", url);
+        void tryComplete("did-navigate-in-page");
+      }
     });
     win.webContents.on("did-redirect-navigation", (_e, url) => {
       logSteam("did-redirect-navigation →", url);
@@ -285,10 +417,11 @@ ipcMain.handle("desktop:loginToSteam", async () => {
 });
 
 // Returns previously-saved cookies on launch so the user can skip the login
-// screen between sessions. Returns null if no valid set is present.
+// screen between sessions. Accepts partial creds (only steamgames pair
+// required) — backend will re-mint steampowered cookies via JWT refresh.
 ipcMain.handle("desktop:getStoredSteamCookies", async () => {
   try {
-    return await readSteamCookies();
+    return await readSteamCookies({ requireFull: false });
   } catch {
     return null;
   }

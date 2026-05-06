@@ -1059,11 +1059,13 @@ async function fetchWishlists(
   partnerSessionid?: string,
   partnerSteamLoginSecure?: string
 ): Promise<StatRow[]> {
-  try {
-    const url = `${BASE_PARTNER}/app/wishlist/${appId}/`;
-    const html = await fetchPartnerHtml("wishlist", url, sessionid, steamLoginSecure, partnerSessionid, partnerSteamLoginSecure);
-    if (!html) return [];
+  const url = `${BASE_PARTNER}/app/wishlist/${appId}/`;
+  const html = await fetchPartnerHtml("wishlist", url, sessionid, steamLoginSecure, partnerSessionid, partnerSteamLoginSecure);
+  if (!html) {
+    throw new Error("Could not access wishlist stats page. Login/session not detected.");
+  }
 
+  try {
     const { tables, stats } = extractTablesAndStats(html);
     logger.info({ appId, tableCount: tables.length, statCount: stats.length, headers: tables.map((t) => t.headers) }, "wishlist parse");
 
@@ -1090,9 +1092,11 @@ async function fetchWishlists(
     }
   } catch (e) {
     if ((e as Error).message === "session_expired") throw e;
-    logger.warn({ appId, err: (e as Error).message }, "Wishlist fetch error");
+    if ((e as Error).message?.startsWith("Could not")) throw e;
+    logger.warn({ appId, err: (e as Error).message }, "Wishlist parse error");
+    throw new Error(`Could not parse wishlist data on the Steamworks page (${(e as Error).message}).`);
   }
-  return [];
+  throw new Error("Could not find wishlist data on the Steamworks page.");
 }
 
 /**
@@ -1188,8 +1192,15 @@ async function fetchVisits(
   partnerSessionid?: string,
   partnerSteamLoginSecure?: string
 ): Promise<StatRow[]> {
+  let tables: Array<{ headers: string[]; rows: string[][] }>;
+  let stats: Array<{ label: string; value: string }>;
   try {
-    const { tables, stats } = await getTrafficStats(appId, sessionid, steamLoginSecure, granularity, partnerSessionid, partnerSteamLoginSecure);
+    ({ tables, stats } = await getTrafficStats(appId, sessionid, steamLoginSecure, granularity, partnerSessionid, partnerSteamLoginSecure));
+  } catch (e) {
+    if ((e as Error).message === "session_expired") throw e;
+    throw new Error(`Could not access visits/impressions stats page. Login/session not detected. (${(e as Error).message})`);
+  }
+  try {
 
     // Visits table: has columns like Date, Visits, Unique Visitors, Impressions
     for (const { headers, rows } of tables) {
@@ -1219,9 +1230,11 @@ async function fetchVisits(
     }
   } catch (e) {
     if ((e as Error).message === "session_expired") throw e;
-    logger.warn({ appId, err: (e as Error).message }, "Visits fetch error");
+    if ((e as Error).message?.startsWith("Could not")) throw e;
+    logger.warn({ appId, err: (e as Error).message }, "Visits parse error");
+    throw new Error(`Could not parse visits/impressions on the Steamworks page (${(e as Error).message}).`);
   }
-  return [];
+  throw new Error("Could not find visits/impressions data on the Steamworks page.");
 }
 
 async function fetchTrafficBreakdown(
@@ -1252,8 +1265,12 @@ async function fetchTrafficBreakdown(
     }
   } catch (e) {
     if ((e as Error).message === "session_expired") throw e;
+    if ((e as Error).message?.startsWith("Could not")) throw e;
     logger.warn({ appId, err: (e as Error).message }, "Traffic breakdown fetch error");
+    throw new Error(`Could not parse traffic breakdown on the Steamworks page (${(e as Error).message}).`);
   }
+  // Traffic breakdown is sometimes legitimately empty for new games — don't
+  // throw, just return [] so the absence is silent rather than an error.
   return [];
 }
 
@@ -1531,39 +1548,57 @@ export async function pullAllStats(
       onProgress({ gameIndex: i + 1, totalGames: appIds.length, gameName, metric, estimatedSecondsRemaining: remaining });
     };
 
-    try {
-      report("Wishlists");
-      stats.wishlistData = await fetchWishlists(appId, sessionid, steamLoginSecure, granularity, partnerSessionid, partnerSteamLoginSecure);
-      await sleep(400);
-
-      if (isCancelled()) break;
-      report("Visits & Impressions");
-      stats.visitsData = await fetchVisits(appId, sessionid, steamLoginSecure, granularity, partnerSessionid, partnerSteamLoginSecure);
-      await sleep(400);
-
-      if (isCancelled()) break;
-      report("Traffic Breakdown");
-      stats.trafficData = await fetchTrafficBreakdown(appId, sessionid, steamLoginSecure, granularity, partnerSessionid, partnerSteamLoginSecure);
-      await sleep(400);
-
-      if (isCancelled()) break;
-      report("Sales");
+    // Per-metric resilience — one failure does not kill the rest. Each
+    // metric pushes its own descriptive error to `errors[]` which the
+    // Excel writer prints at the bottom of the per-game sheet.
+    const runMetric = async <T>(
+      label: string,
+      fn: () => Promise<T>
+    ): Promise<T | undefined> => {
+      report(label);
       try {
-        stats.salesData = await fetchSales(appId, sessionid, steamLoginSecure, granularity, partnerSessionid, partnerSteamLoginSecure, customRange);
-      } catch {
-        stats.salesData = [];
-        errors.push("Sales data unavailable");
+        return await fn();
+      } catch (e) {
+        const msg = (e as Error).message;
+        if (msg === "session_expired") throw e;
+        errors.push(`${label}: ${msg}`);
+        logger.warn({ appId, label, err: msg }, "metric failed");
+        return undefined;
       }
+    };
+
+    try {
+      stats.wishlistData = await runMetric("Wishlists", () =>
+        fetchWishlists(appId, sessionid, steamLoginSecure, granularity, partnerSessionid, partnerSteamLoginSecure)
+      );
       await sleep(400);
 
       if (isCancelled()) break;
-      report("Followers");
-      stats.followersData = await fetchFollowers(appId, sessionid, steamLoginSecure, granularity, partnerSessionid, partnerSteamLoginSecure);
+      stats.visitsData = await runMetric("Visits & Impressions", () =>
+        fetchVisits(appId, sessionid, steamLoginSecure, granularity, partnerSessionid, partnerSteamLoginSecure)
+      );
       await sleep(400);
 
       if (isCancelled()) break;
-      report("Reviews");
-      stats.reviewsData = await fetchReviews(appId);
+      stats.trafficData = await runMetric("Traffic Breakdown", () =>
+        fetchTrafficBreakdown(appId, sessionid, steamLoginSecure, granularity, partnerSessionid, partnerSteamLoginSecure)
+      );
+      await sleep(400);
+
+      if (isCancelled()) break;
+      stats.salesData = await runMetric("Sales", () =>
+        fetchSales(appId, sessionid, steamLoginSecure, granularity, partnerSessionid, partnerSteamLoginSecure, customRange)
+      );
+      await sleep(400);
+
+      if (isCancelled()) break;
+      stats.followersData = await runMetric("Followers", () =>
+        fetchFollowers(appId, sessionid, steamLoginSecure, granularity, partnerSessionid, partnerSteamLoginSecure)
+      );
+      await sleep(400);
+
+      if (isCancelled()) break;
+      stats.reviewsData = (await runMetric("Reviews", () => fetchReviews(appId))) ?? null;
       await sleep(200);
     } catch (e) {
       const msg = (e as Error).message;

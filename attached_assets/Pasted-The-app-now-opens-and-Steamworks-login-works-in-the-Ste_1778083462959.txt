@@ -1,0 +1,46 @@
+The app now opens and Steamworks login works in the Steamworks window. I can see the Steamworks dashboard and my publisher account is logged in. However, the main app stays stuck on "Waiting for sign-in..." and never detects the successful login.
+
+When I use the fallback/default browser method, it lets me continue, but the exported Excel is full of n/a values for the games. This means the app is not using an authenticated Steamworks session when scraping/exporting.
+
+Fix the app logic.
+
+Requirements:
+
+1. The Electron Steamworks login window and the exporter must use the same persistent session partition, for example:
+   partition: "persist:steamworks"
+
+2. Keep the Steamworks login BrowserWindow open and store it in a global variable so it is not garbage-collected.
+
+3. Detect successful login based on real Steamworks state, not only a missing sessionid cookie.
+   Successful login should be detected if:
+   - the login window reaches the Steamworks dashboard, OR
+   - the page shows the publisher account/company name, OR
+   - steamLoginSecure exists for Steam/Steamworks domains.
+
+4. Check cookies across these domains:
+   - partner.steamgames.com
+   - partner.steampowered.com
+   - steamcommunity.com
+   - store.steampowered.com
+
+5. When successful login is detected, send an IPC event to the main renderer so the main app changes from "Waiting for sign-in..." to logged-in/export-ready.
+
+6. Do not use the default browser fallback as proof of login unless the app has a real way to transfer authentication back into Electron. The current fallback creates a false login state and exports n/a.
+
+7. The exporter must use the same authenticated Electron session cookies to request Steamworks pages.
+
+8. Add debug logs showing:
+   - current login window URL
+   - whether steamLoginSecure was found
+   - which domain it was found on
+   - which Steamworks page is being fetched for each game
+   - whether the response was login page, dashboard page, or actual stats page
+
+9. If scraping fails, do not write n/a silently. Instead, show an error like:
+   "Could not access stats page. Login/session not detected."
+   or
+   "Could not find wishlist/visits data on the Steamworks page."
+
+10. After fixing, test with the packaged Windows desktop app, not only the Replit preview.
+
+Tell me exactly which files changed and what commands I need to run to commit, push, and rebuild the Windows artifact.

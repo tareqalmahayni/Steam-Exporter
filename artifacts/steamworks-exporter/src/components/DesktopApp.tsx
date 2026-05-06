@@ -264,9 +264,16 @@ export function DesktopApp() {
                     </h3>
                     <ol className="text-xs text-muted-foreground list-decimal list-inside space-y-1">
                       <li>Your browser just opened to <span className="font-mono text-foreground">partner.steamgames.com</span>. Sign in there (including 2FA).</li>
-                      <li>Once you reach the Steamworks home page, open DevTools (<span className="font-mono">F12</span>) → Application → Cookies.</li>
-                      <li>Copy the <span className="font-mono">sessionid</span> and <span className="font-mono">steamLoginSecure</span> values for <span className="font-mono">partner.steamgames.com</span> AND <span className="font-mono">partner.steampowered.com</span>, paste them below.</li>
+                      <li>Open DevTools (<span className="font-mono">F12</span>) → Application → Cookies → <span className="font-mono">https://partner.steamgames.com</span>. Copy the <span className="font-mono">sessionid</span> and <span className="font-mono">steamLoginSecure</span> values into the first two fields below.</li>
+                      <li><b>Now visit <span className="font-mono">https://partner.steampowered.com/home</span> in the same browser tab.</b> This is required — it forces Steam to issue a separate cookie pair for that domain. The exporter pulls per-game stats from <span className="font-mono">partner.steampowered.com</span>, so without these the Excel will be empty.</li>
+                      <li>Open DevTools again on the new page → <span className="font-mono">https://partner.steampowered.com</span> → copy <span className="font-mono">sessionid</span> and <span className="font-mono">steamLoginSecure</span> into the last two fields below.</li>
                     </ol>
+                    <Alert className="border-amber-500/40 bg-amber-500/10 mt-2">
+                      <AlertTriangle className="h-4 w-4 text-amber-500" />
+                      <AlertDescription className="ml-2 text-xs text-amber-200">
+                        Pasting the same value into all four fields, or skipping the partner.steampowered.com step, will let you proceed but the exported Excel will show "Could not access stats page" for every game. Use the embedded sign-in button above whenever possible — it handles all of this automatically.
+                      </AlertDescription>
+                    </Alert>
                   </div>
                   <div className="grid grid-cols-1 gap-3">
                     <ManualField
