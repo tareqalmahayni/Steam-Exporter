@@ -6,7 +6,7 @@ import {
   GetPullStatusParams,
   DownloadPullParams,
 } from "@workspace/api-zod";
-import { pullAllStats, listGames, type GameInfo } from "../lib/steamworks";
+import { pullAllStats, listGames, probeStats, type GameInfo } from "../lib/steamworks";
 import { generateExcel } from "../lib/excel";
 import { logger } from "../lib/logger";
 
@@ -116,6 +116,24 @@ router.post("/pull/start", async (req, res): Promise<void> => {
         () => job.cancelled
       );
 
+      // Log a summary of what was actually collected so we can diagnose empty data
+      for (const s of statsResults) {
+        logger.info(
+          {
+            appId: s.appId,
+            gameName: s.gameName,
+            wishlistRows: s.wishlistData?.length ?? 0,
+            visitsRows: s.visitsData?.length ?? 0,
+            trafficRows: s.trafficData?.length ?? 0,
+            salesRows: s.salesData?.length ?? 0,
+            followersRows: s.followersData?.length ?? 0,
+            hasReviews: !!s.reviewsData,
+            errors: s.errors,
+          },
+          "game stats collected"
+        );
+      }
+
       if (job.cancelled) {
         job.status = "cancelled";
         return;
@@ -220,6 +238,30 @@ router.get("/pull/download/:jobId", (req, res): void => {
     `attachment; filename="${job.filename || "steamworks_pull.xlsx"}"`
   );
   res.send(job.excelBuffer);
+});
+
+// Diagnostic: probe all stat endpoints for one appId and return raw responses.
+// POST /api/pull/probe  { sessionid, steamLoginSecure, appId, granularity }
+router.post("/pull/probe", async (req, res): Promise<void> => {
+  const { sessionid, steamLoginSecure, appId, granularity } = req.body as {
+    sessionid?: string;
+    steamLoginSecure?: string;
+    appId?: number;
+    granularity?: string;
+  };
+
+  if (!sessionid || !steamLoginSecure || !appId) {
+    res.status(400).json({ error: "missing_params", message: "sessionid, steamLoginSecure, and appId are required" });
+    return;
+  }
+
+  try {
+    const results = await probeStats(Number(appId), sessionid, steamLoginSecure, granularity || "monthly");
+    res.json({ appId, granularity: granularity || "monthly", results });
+  } catch (e) {
+    req.log.error({ err: e }, "Stats probe failed");
+    res.status(500).json({ error: "probe_failed", message: (e as Error).message });
+  }
 });
 
 export default router;

@@ -5,7 +5,7 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useListGames, type GameInfo, type PullRequestGranularity } from "@workspace/api-client-react";
-import { Loader2, RefreshCw, AlertTriangle, PlusCircle } from "lucide-react";
+import { Loader2, RefreshCw, AlertTriangle, PlusCircle, FlaskConical, CheckCircle2, XCircle } from "lucide-react";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 
@@ -15,6 +15,16 @@ interface StepPickGamesProps {
   setSelectedGames: (appIds: number[]) => void;
   granularity: PullRequestGranularity;
   setGranularity: (g: PullRequestGranularity) => void;
+}
+
+interface ProbeResult {
+  metric: string;
+  url: string;
+  status: number;
+  contentType: string;
+  bodyLen: number;
+  bodySnippet: string;
+  parsedRowCount: number;
 }
 
 export function StepPickGames({
@@ -29,6 +39,10 @@ export function StepPickGames({
   const [manualMode, setManualMode] = useState(false);
   const [manualInput, setManualInput] = useState("");
   const [manualError, setManualError] = useState("");
+  const [probeResults, setProbeResults] = useState<ProbeResult[] | null>(null);
+  const [probeLoading, setProbeLoading] = useState(false);
+  const [probeError, setProbeError] = useState("");
+  const [probeOpen, setProbeOpen] = useState(false);
 
   const listGames = useListGames({
     mutation: {
@@ -88,6 +102,29 @@ export function StepPickGames({
     setSelectedGames([...selectedGames, ...newGames.map((g) => g.appId)]);
     setManualInput("");
     setManualMode(false);
+  };
+
+  const handleProbe = async () => {
+    const appId = selectedGames[0] ?? games[0]?.appId;
+    if (!appId) return;
+    setProbeLoading(true);
+    setProbeError("");
+    setProbeResults(null);
+    setProbeOpen(true);
+    try {
+      const resp = await fetch("/api/pull/probe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...credentials, appId, granularity }),
+      });
+      const json = await resp.json() as { results?: ProbeResult[]; message?: string };
+      if (!resp.ok) throw new Error(json.message || `HTTP ${resp.status}`);
+      setProbeResults(json.results ?? []);
+    } catch (e) {
+      setProbeError((e as Error).message);
+    } finally {
+      setProbeLoading(false);
+    }
   };
 
   const noGamesFound = !listGames.isPending && !listGames.isError && games.length === 0;
@@ -252,6 +289,88 @@ export function StepPickGames({
             ))}
           </RadioGroup>
         </div>
+
+        {/* Diagnostic probe */}
+        {(games.length > 0 || selectedGames.length > 0) && (
+          <div className="border-t border-border/50 pt-4">
+            <div className="flex items-center justify-between">
+              <p className="text-xs text-muted-foreground">
+                If stats come back empty, run a quick endpoint probe to see what Steamworks actually returns.
+              </p>
+              <Button
+                variant="outline"
+                size="sm"
+                className="ml-4 shrink-0 text-xs"
+                onClick={handleProbe}
+                disabled={probeLoading || (selectedGames.length === 0 && games.length === 0)}
+              >
+                {probeLoading ? (
+                  <><Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> Probing...</>
+                ) : (
+                  <><FlaskConical className="h-3.5 w-3.5 mr-1.5" /> Probe Stats Endpoints</>
+                )}
+              </Button>
+            </div>
+
+            {probeOpen && (
+              <div className="mt-4 space-y-2">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                    Probe Results — AppID {selectedGames[0] ?? games[0]?.appId}
+                  </p>
+                  <Button variant="ghost" size="sm" className="h-6 text-xs" onClick={() => setProbeOpen(false)}>
+                    Hide
+                  </Button>
+                </div>
+                {probeError && (
+                  <p className="text-xs text-destructive">{probeError}</p>
+                )}
+                {probeResults && (
+                  <div className="rounded-md border border-border overflow-hidden text-xs font-mono">
+                    <div className="grid grid-cols-[140px_60px_80px_1fr] bg-muted/50 px-3 py-1.5 font-sans font-semibold text-muted-foreground border-b border-border">
+                      <span>Endpoint</span>
+                      <span>HTTP</span>
+                      <span>Rows found</span>
+                      <span>Body snippet</span>
+                    </div>
+                    {probeResults.map((r, i) => (
+                      <div
+                        key={i}
+                        className="grid grid-cols-[140px_60px_80px_1fr] px-3 py-2 border-b border-border/50 last:border-0 items-start gap-2 hover:bg-muted/20 transition-colors"
+                      >
+                        <span className="text-foreground truncate" title={r.metric}>{r.metric}</span>
+                        <span className={r.status >= 200 && r.status < 300 ? "text-green-400" : "text-destructive"}>
+                          {r.status || "err"}
+                        </span>
+                        <span className="flex items-center gap-1">
+                          {r.parsedRowCount > 0 ? (
+                            <><CheckCircle2 className="h-3 w-3 text-green-400 shrink-0" />{r.parsedRowCount}</>
+                          ) : (
+                            <><XCircle className="h-3 w-3 text-muted-foreground shrink-0" />0</>
+                          )}
+                        </span>
+                        <span
+                          className="text-muted-foreground truncate leading-tight"
+                          title={r.bodySnippet}
+                        >
+                          {r.bodySnippet.slice(0, 120)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {probeResults && probeResults.every((r) => r.parsedRowCount === 0) && (
+                  <Alert className="border-orange-600/40 bg-orange-950/20">
+                    <AlertTriangle className="h-4 w-4 text-orange-400" />
+                    <AlertDescription className="ml-2 text-xs text-muted-foreground">
+                      All endpoints returned 0 rows. The body snippets above show what Steamworks is actually sending back — share them so the scraper can be updated to match.
+                    </AlertDescription>
+                  </Alert>
+                )}
+              </div>
+            )}
+          </div>
+        )}
       </CardContent>
     </Card>
   );
