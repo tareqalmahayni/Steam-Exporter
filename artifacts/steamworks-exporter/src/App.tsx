@@ -13,17 +13,25 @@ import { Button } from "@/components/ui/button";
 
 const queryClient = new QueryClient();
 
-function buildBookmarkletHref(origin: string): string {
-  const loader =
-    "(function(){var s=document.createElement('script');s.src='" +
-    origin +
-    "/api/bookmarklet.js?t='+Date.now();document.body.appendChild(s);})();";
-  return "javascript:" + encodeURI(loader);
-}
-
 function BookmarkletInstall({ onUseLegacy }: { onUseLegacy: () => void }) {
-  const origin = typeof window !== "undefined" ? window.location.origin : "";
-  const href = buildBookmarkletHref(origin);
+  // We INLINE the entire bookmarklet payload into the javascript: URL.
+  // Steamworks CSP blocks remote <script src> loads, so the loader-tag
+  // approach silently fails. Inlining bypasses CSP because javascript: URLs
+  // triggered by user gesture are allowed.
+  const [href, setHref] = useState<string>("javascript:void(0)");
+  const [bookmarkletReady, setBookmarkletReady] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/bookmarklet.js")
+      .then((r) => r.text())
+      .then((text) => {
+        // Wrap as IIFE-ready javascript: URL. encodeURIComponent keeps it safe
+        // from URL-bar parsing for special chars; browsers decode on click.
+        setHref("javascript:" + encodeURIComponent(text));
+        setBookmarkletReady(true);
+      })
+      .catch(() => setBookmarkletReady(false));
+  }, []);
 
   return (
     <div className="space-y-6">
@@ -44,9 +52,13 @@ function BookmarkletInstall({ onUseLegacy }: { onUseLegacy: () => void }) {
             href={href}
             onClick={(e) => e.preventDefault()}
             draggable
-            className="inline-block rounded-md bg-primary text-primary-foreground px-5 py-2.5 font-semibold text-sm shadow hover:bg-primary/90 cursor-grab active:cursor-grabbing"
+            className={`inline-block rounded-md px-5 py-2.5 font-semibold text-sm shadow cursor-grab active:cursor-grabbing ${
+              bookmarkletReady
+                ? "bg-primary text-primary-foreground hover:bg-primary/90"
+                : "bg-muted text-muted-foreground pointer-events-none"
+            }`}
           >
-            Steamworks Exporter
+            {bookmarkletReady ? "Steamworks Exporter" : "Loading…"}
           </a>
           <p className="text-xs text-muted-foreground mt-3">
             If you don&apos;t see your bookmarks bar, press{" "}
@@ -73,7 +85,8 @@ function BookmarkletInstall({ onUseLegacy }: { onUseLegacy: () => void }) {
               >
                 partner.steamgames.com
               </a>{" "}
-              and click the bookmark.
+              and click the bookmark. An overlay will appear so you can pick
+              which games to export and what date range to use.
             </li>
             <li>
               When prompted, open{" "}
@@ -85,7 +98,7 @@ function BookmarkletInstall({ onUseLegacy }: { onUseLegacy: () => void }) {
               >
                 partner.steampowered.com
               </a>{" "}
-              and click the bookmark again.
+              and click the bookmark again to finish.
             </li>
             <li>Your Excel file downloads automatically.</li>
           </ol>

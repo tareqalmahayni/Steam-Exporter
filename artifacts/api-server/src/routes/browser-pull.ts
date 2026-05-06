@@ -120,6 +120,44 @@ router.post("/browser-pull/init", (req, res): void => {
   });
 });
 
+// ─── POST /browser-pull/configure ───────────────────────────────────────────
+// Bookmarklet calls this after the user picks games + granularity in the
+// in-page overlay. Server filters the active job's game list and updates
+// granularity, returning the URL plan computed from those selections.
+router.post("/browser-pull/configure", (req, res): void => {
+  const { sessionId, selectedAppIds, granularity } = (req.body ?? {}) as {
+    sessionId?: string;
+    selectedAppIds?: number[];
+    granularity?: string;
+  };
+  if (!sessionId || !Array.isArray(selectedAppIds) || !granularity) {
+    res.status(400).json({ error: "missing_fields" });
+    return;
+  }
+  if (!activeJob || activeJob.sessionId !== sessionId) {
+    res.status(404).json({ error: "session_not_found" });
+    return;
+  }
+  const idSet = new Set(selectedAppIds);
+  const filtered = activeJob.games.filter((g) => idSet.has(g.appId));
+  if (filtered.length === 0) {
+    res.status(400).json({ error: "no_games_selected" });
+    return;
+  }
+  activeJob.games = filtered;
+  activeJob.granularity = granularity;
+  logger.info(
+    { sessionId, gameCount: filtered.length, granularity },
+    "browser-pull configured",
+  );
+  res.json({
+    ok: true,
+    gameCount: filtered.length,
+    steamgamesUrls: steamgamesUrlsFor(filtered),
+    steampoweredUrls: steampoweredUrlsFor(filtered, granularity),
+  });
+});
+
 // ─── GET /browser-pull/active ───────────────────────────────────────────────
 // Cross-domain handoff: bookmarklet on partner.steampowered.com calls this
 // to find out the sessionId + URLs it needs to fetch.
