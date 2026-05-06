@@ -1,7 +1,9 @@
 import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Loader2, LogIn, AlertTriangle } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Loader2, LogIn, AlertTriangle, ExternalLink } from "lucide-react";
 import { StepPickGames } from "@/components/StepPickGames";
 import { StepPull } from "@/components/StepPull";
 import { useTestConnection, type PullRequestGranularity } from "@workspace/api-client-react";
@@ -38,6 +40,10 @@ export function DesktopApp() {
   const [customStartIso, setCustomStartIso] = useState<string>("");
   const [customEndIso, setCustomEndIso] = useState<string>("");
   const [autoLoginChecked, setAutoLoginChecked] = useState(false);
+  const [fallbackOpen, setFallbackOpen] = useState(false);
+  const [manualCreds, setManualCreds] = useState<Credentials>(EMPTY);
+  const [manualSubmitting, setManualSubmitting] = useState(false);
+  const [manualError, setManualError] = useState<string | null>(null);
 
   const testConn = useTestConnection({
     mutation: {
@@ -116,8 +122,48 @@ export function DesktopApp() {
     setPublisherName(null);
     setSelectedGames([]);
     setStep(1);
+    setFallbackOpen(false);
+    setManualCreds(EMPTY);
+    setManualError(null);
     if (window.desktop?.clearStoredSteamCookies) {
       await window.desktop.clearStoredSteamCookies();
+    }
+  };
+
+  const handleOpenInBrowser = async () => {
+    setManualError(null);
+    setFallbackOpen(true);
+    if (window.desktop?.openSteamLoginInBrowser) {
+      try {
+        await window.desktop.openSteamLoginInBrowser();
+      } catch (e) {
+        setManualError((e as Error).message);
+      }
+    }
+  };
+
+  const handleManualSubmit = async () => {
+    setManualError(null);
+    if (!isFullCreds(manualCreds)) {
+      setManualError("All four cookie values are required.");
+      return;
+    }
+    setManualSubmitting(true);
+    try {
+      if (window.desktop?.saveSteamCookies) {
+        const res = await window.desktop.saveSteamCookies(manualCreds);
+        if (!res.ok) {
+          setManualError(res.error || "Could not save cookies.");
+          return;
+        }
+        setCredentials(res.credentials ?? manualCreds);
+      } else {
+        setCredentials(manualCreds);
+      }
+      setFallbackOpen(false);
+      setManualCreds(EMPTY);
+    } finally {
+      setManualSubmitting(false);
     }
   };
 
@@ -198,6 +244,87 @@ export function DesktopApp() {
                   </AlertDescription>
                 </Alert>
               )}
+
+              {!showAutoLoginSpinner && !fallbackOpen && (
+                <button
+                  type="button"
+                  onClick={handleOpenInBrowser}
+                  className="text-xs text-muted-foreground hover:text-primary underline underline-offset-4"
+                  data-testid="link-browser-fallback"
+                >
+                  Trouble signing in? Use your default browser instead
+                </button>
+              )}
+
+              {fallbackOpen && (
+                <div className="w-full max-w-xl text-left rounded-md border border-border bg-background/40 p-5 space-y-4" data-testid="panel-browser-fallback">
+                  <div className="space-y-2">
+                    <h3 className="text-sm font-bold flex items-center gap-2">
+                      <ExternalLink className="h-4 w-4 text-primary" /> Sign in via your browser
+                    </h3>
+                    <ol className="text-xs text-muted-foreground list-decimal list-inside space-y-1">
+                      <li>Your browser just opened to <span className="font-mono text-foreground">partner.steamgames.com</span>. Sign in there (including 2FA).</li>
+                      <li>Once you reach the Steamworks home page, open DevTools (<span className="font-mono">F12</span>) → Application → Cookies.</li>
+                      <li>Copy the <span className="font-mono">sessionid</span> and <span className="font-mono">steamLoginSecure</span> values for <span className="font-mono">partner.steamgames.com</span> AND <span className="font-mono">partner.steampowered.com</span>, paste them below.</li>
+                    </ol>
+                  </div>
+                  <div className="grid grid-cols-1 gap-3">
+                    <ManualField
+                      label="sessionid (partner.steamgames.com)"
+                      testId="input-manual-sessionid"
+                      value={manualCreds.sessionid}
+                      onChange={(v) => setManualCreds((c) => ({ ...c, sessionid: v }))}
+                    />
+                    <ManualField
+                      label="steamLoginSecure (partner.steamgames.com)"
+                      testId="input-manual-steamloginsecure"
+                      value={manualCreds.steamLoginSecure}
+                      onChange={(v) => setManualCreds((c) => ({ ...c, steamLoginSecure: v }))}
+                    />
+                    <ManualField
+                      label="sessionid (partner.steampowered.com)"
+                      testId="input-manual-partner-sessionid"
+                      value={manualCreds.partnerSessionid}
+                      onChange={(v) => setManualCreds((c) => ({ ...c, partnerSessionid: v }))}
+                    />
+                    <ManualField
+                      label="steamLoginSecure (partner.steampowered.com)"
+                      testId="input-manual-partner-steamloginsecure"
+                      value={manualCreds.partnerSteamLoginSecure}
+                      onChange={(v) => setManualCreds((c) => ({ ...c, partnerSteamLoginSecure: v }))}
+                    />
+                  </div>
+                  {manualError && (
+                    <p className="text-xs text-destructive">{manualError}</p>
+                  )}
+                  <div className="flex items-center gap-2 justify-end">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        setFallbackOpen(false);
+                        setManualCreds(EMPTY);
+                        setManualError(null);
+                      }}
+                      disabled={manualSubmitting}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      size="sm"
+                      onClick={handleManualSubmit}
+                      disabled={manualSubmitting || !isFullCreds(manualCreds)}
+                      data-testid="button-manual-submit"
+                    >
+                      {manualSubmitting ? (
+                        <><Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> Saving…</>
+                      ) : (
+                        "Continue"
+                      )}
+                    </Button>
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
         )}
@@ -249,6 +376,34 @@ export function DesktopApp() {
           </div>
         )}
       </main>
+    </div>
+  );
+}
+
+function ManualField({
+  label,
+  value,
+  onChange,
+  testId,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  testId: string;
+}) {
+  return (
+    <div className="space-y-1">
+      <Label className="text-xs text-muted-foreground">{label}</Label>
+      <Input
+        type="text"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="Paste value here"
+        className="font-mono text-xs h-8 bg-background"
+        data-testid={testId}
+        autoComplete="off"
+        spellCheck={false}
+      />
     </div>
   );
 }

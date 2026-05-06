@@ -18,6 +18,10 @@ declare global {
       getStoredSteamCookies: () => Promise<Credentials | null>;
       clearStoredSteamCookies: () => Promise<{ ok: boolean; error?: string }>;
       openExternal: (url: string) => Promise<void>;
+      openSteamLoginInBrowser: () => Promise<{ ok: boolean }>;
+      saveSteamCookies: (
+        creds: Credentials
+      ) => Promise<{ ok: boolean; credentials?: Credentials; error?: string }>;
     };
   }
 }

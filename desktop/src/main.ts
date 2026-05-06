@@ -313,6 +313,69 @@ ipcMain.handle("desktop:openExternal", async (_e, url: string) => {
   }
 });
 
+// ─── Browser-fallback login flow ─────────────────────────────────────────────
+// If the embedded Electron window misbehaves on a particular Windows install
+// (rare, but possible — antivirus, Group Policy, weird display drivers), the
+// renderer can fall back to: (a) open Steamworks in the user's default
+// browser, (b) sign in there, (c) paste the four cookie values into a form,
+// (d) we save them into the persistent partition so auto-login still works
+// across launches.
+
+ipcMain.handle("desktop:openSteamLoginInBrowser", async () => {
+  await shell.openExternal("https://partner.steamgames.com/home");
+  return { ok: true };
+});
+
+ipcMain.handle("desktop:saveSteamCookies", async (_e, creds: Credentials) => {
+  if (
+    !creds ||
+    typeof creds.sessionid !== "string" ||
+    typeof creds.steamLoginSecure !== "string" ||
+    typeof creds.partnerSessionid !== "string" ||
+    typeof creds.partnerSteamLoginSecure !== "string"
+  ) {
+    return { ok: false, error: "missing_fields" };
+  }
+  const trimmed: Credentials = {
+    sessionid: creds.sessionid.trim(),
+    steamLoginSecure: creds.steamLoginSecure.trim(),
+    partnerSessionid: creds.partnerSessionid.trim(),
+    partnerSteamLoginSecure: creds.partnerSteamLoginSecure.trim(),
+  };
+  if (
+    !trimmed.sessionid ||
+    !trimmed.steamLoginSecure ||
+    !trimmed.partnerSessionid ||
+    !trimmed.partnerSteamLoginSecure
+  ) {
+    return { ok: false, error: "empty_fields" };
+  }
+
+  const loginSession = session.fromPartition(STEAM_LOGIN_PARTITION);
+  const writes: Array<{ url: string; name: string; value: string; domain: string }> = [
+    { url: "https://partner.steamgames.com", name: "sessionid", value: trimmed.sessionid, domain: "partner.steamgames.com" },
+    { url: "https://partner.steamgames.com", name: "steamLoginSecure", value: trimmed.steamLoginSecure, domain: "partner.steamgames.com" },
+    { url: "https://partner.steampowered.com", name: "sessionid", value: trimmed.partnerSessionid, domain: "partner.steampowered.com" },
+    { url: "https://partner.steampowered.com", name: "steamLoginSecure", value: trimmed.partnerSteamLoginSecure, domain: "partner.steampowered.com" },
+  ];
+  try {
+    for (const c of writes) {
+      await loginSession.cookies.set({
+        url: c.url,
+        name: c.name,
+        value: c.value,
+        domain: c.domain,
+        path: "/",
+        secure: true,
+        httpOnly: false,
+      });
+    }
+    return { ok: true, credentials: trimmed };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+});
+
 // ─── App lifecycle ───────────────────────────────────────────────────────────
 
 app.whenReady().then(createWindow);
