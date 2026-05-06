@@ -711,13 +711,26 @@ export function getDateRangeIso(
   const now = new Date();
   const fmt = (d: Date) =>
     `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-  const start = new Date(now);
+  let start = new Date(now);
+  let end = new Date(now);
   if (granularity === "weekly") start.setDate(now.getDate() - 7);
   else if (granularity === "monthly") start.setDate(now.getDate() - 30);
-  else if (granularity === "yearly") start.setDate(now.getDate() - 365);
-  else if (granularity === "lifetime") start.setFullYear(2003, 0, 1);
-  // daily: start = today
-  return { startIso: fmt(start), endIso: fmt(now) };
+  else if (granularity === "yearly" || granularity === "previous-year") {
+    // Previous calendar year: Jan 1 → Dec 31 of last year
+    start = new Date(now.getFullYear() - 1, 0, 1);
+    end = new Date(now.getFullYear() - 1, 11, 31);
+  } else if (granularity === "previous-month") {
+    // Previous calendar month
+    start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    end = new Date(now.getFullYear(), now.getMonth(), 0);
+  } else if (granularity === "today") {
+    // Just today
+    start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  } else if (granularity === "lifetime") {
+    start.setFullYear(2003, 0, 1);
+  }
+  // daily: start = today (legacy alias)
+  return { startIso: fmt(start), endIso: fmt(end) };
 }
 
 // ─── Stat helpers ────────────────────────────────────────────────────────────

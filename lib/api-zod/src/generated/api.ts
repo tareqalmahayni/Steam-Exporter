@@ -102,8 +102,25 @@ export const StartPullBody = zod.object({
     .describe("steamLoginSecure from partner.steampowered.com"),
   appIds: zod.array(zod.number()).describe("App IDs to pull data for"),
   granularity: zod
-    .enum(["daily", "weekly", "monthly", "lifetime"])
+    .enum([
+      "daily",
+      "weekly",
+      "monthly",
+      "lifetime",
+      "today",
+      "previous-month",
+      "previous-year",
+      "custom",
+    ])
     .describe("Time granularity for the pull"),
+  customStartIso: zod
+    .string()
+    .optional()
+    .describe('Start date (YYYY-MM-DD) when granularity is \"custom\"'),
+  customEndIso: zod
+    .string()
+    .optional()
+    .describe('End date (YYYY-MM-DD) when granularity is \"custom\"'),
 });
 
 export const StartPullResponse = zod.object({

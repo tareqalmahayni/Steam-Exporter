@@ -18,4 +18,8 @@ export interface PullRequest {
   appIds: number[];
   /** Time granularity for the pull */
   granularity: PullRequestGranularity;
+  /** Start date (YYYY-MM-DD) when granularity is "custom" */
+  customStartIso?: string;
+  /** End date (YYYY-MM-DD) when granularity is "custom" */
+  customEndIso?: string;
 }

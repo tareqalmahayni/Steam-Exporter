@@ -1,0 +1,62 @@
+{
+  "name": "@workspace/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Steamworks Publisher Stats Exporter — Electron desktop app",
+  "main": "dist/main.cjs",
+  "scripts": {
+    "build:main": "node ./scripts/build-main.mjs",
+    "build:server": "pnpm --filter @workspace/api-server run build",
+    "build:web": "cross-env PORT=1 BASE_PATH=/ pnpm --filter @workspace/steamworks-exporter run build",
+    "build:bundle": "node ./scripts/bundle-resources.mjs",
+    "build": "pnpm run build:server && pnpm run build:web && pnpm run build:main && pnpm run build:bundle",
+    "start": "electron ./dist/main.cjs",
+    "dev": "pnpm run build && pnpm run start",
+    "package": "pnpm run build && electron-builder",
+    "package:mac": "pnpm run build && electron-builder --mac",
+    "package:win": "pnpm run build && electron-builder --win",
+    "package:linux": "pnpm run build && electron-builder --linux",
+    "package:all": "pnpm run build && electron-builder -mwl",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "cross-env": "^7.0.3",
+    "electron": "^33.4.11",
+    "electron-builder": "^25.1.8",
+    "esbuild": "0.27.3",
+    "typescript": "~5.9.2"
+  },
+  "build": {
+    "appId": "com.steamworks.exporter",
+    "productName": "Steamworks Exporter",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "dist/server",
+        "to": "server"
+      },
+      {
+        "from": "dist/web",
+        "to": "web"
+      }
+    ],
+    "mac": {
+      "target": ["dmg", "zip"],
+      "category": "public.app-category.developer-tools"
+    },
+    "win": {
+      "target": ["nsis", "portable"]
+    },
+    "linux": {
+      "target": ["AppImage", "deb"],
+      "category": "Development"
+    }
+  }
+}

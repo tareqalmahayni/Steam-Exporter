@@ -266,9 +266,9 @@ export function StepPickGames({
             className="grid grid-cols-2 md:grid-cols-4 gap-3"
           >
             {[
-              { id: "daily", label: "Daily", desc: "Today" },
-              { id: "weekly", label: "Weekly", desc: "Last 7 days" },
-              { id: "monthly", label: "Monthly", desc: "Last 30 days" },
+              { id: "today", label: "Today", desc: "Just today" },
+              { id: "previous-month", label: "Previous Month", desc: "Last calendar month" },
+              { id: "previous-year", label: "Previous Year", desc: "Last calendar year" },
               { id: "lifetime", label: "Lifetime", desc: "Since launch" },
             ].map((range) => (
               <div key={range.id}>

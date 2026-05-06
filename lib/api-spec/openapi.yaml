@@ -325,8 +325,14 @@ components:
           description: App IDs to pull data for
         granularity:
           type: string
-          enum: [daily, weekly, monthly, lifetime]
+          enum: [daily, weekly, monthly, lifetime, today, previous-month, previous-year, custom]
           description: Time granularity for the pull
+        customStartIso:
+          type: string
+          description: Start date (YYYY-MM-DD) when granularity is "custom"
+        customEndIso:
+          type: string
+          description: End date (YYYY-MM-DD) when granularity is "custom"
       required:
         - sessionid
         - steamLoginSecure

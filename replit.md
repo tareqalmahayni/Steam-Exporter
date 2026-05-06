@@ -1,73 +1,83 @@
 # Steamworks Publisher Stats Exporter
 
-A single-page web app that connects to your Steamworks publisher account using session cookies, pulls stats for each base game, and downloads a single Excel file with one tab per game.
+A downloadable Electron desktop app that signs in to Steamworks in an embedded browser window, pulls stats for each base game, and saves a single Excel file (one tab per game).
 
 ## Run & Operate
 
-- `pnpm --filter @workspace/api-server run dev` — run the API server (port varies, see artifact.toml)
-- `pnpm --filter @workspace/steamworks-exporter run dev` — run the frontend (port varies)
+- `pnpm --filter @workspace/api-server run dev` — run the API server in Replit (web preview / iteration)
+- `pnpm --filter @workspace/steamworks-exporter run dev` — run the React UI
+- `pnpm --filter @workspace/desktop run dev` — build & launch the Electron app locally
+- `pnpm --filter @workspace/desktop run package` — produce installer for the current OS (`desktop/release/`)
+- `pnpm --filter @workspace/desktop run package:mac|:win|:linux` — per-platform installers
 - `pnpm run typecheck` — full typecheck across all packages
-- `pnpm run build` — typecheck + build all packages
-- `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
+- `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas after editing the spec
 - Required env: none (no database — stateless per-session)
+
+Cross-platform installers: see `.github/workflows/build-desktop.yml` (push a `v*` tag or trigger manually).
 
 ## Stack
 
 - pnpm workspaces, Node.js 24, TypeScript 5.9
 - Frontend: React + Vite, shadcn/ui, Tailwind, TanStack Query, Wouter
 - API: Express 5
+- Desktop wrapper: Electron 33 + electron-builder 25
 - Scraping: cheerio + native fetch
 - Excel: exceljs
 - API codegen: Orval (from OpenAPI spec)
-- Build: esbuild (CJS bundle)
 
 ## Where things live
 
 - `lib/api-spec/openapi.yaml` — API contract (source of truth)
 - `lib/api-client-react/src/generated/` — generated React Query hooks
-- `lib/api-zod/src/generated/` — generated Zod schemas for server validation
+- `lib/api-zod/src/generated/` — generated Zod schemas
 - `artifacts/steamworks-exporter/src/` — React frontend
-  - `components/StepConnect.tsx` — Step 1: cookie input + connection test
-  - `components/StepPickGames.tsx` — Step 2: game selection + range presets
-  - `components/StepPull.tsx` — Step 3: pull with live progress + download
-  - `components/TutorialPanel.tsx` — slide-over with DevTools cookie instructions
-- `artifacts/api-server/src/routes/` — Express route handlers
-- `artifacts/api-server/src/lib/steamworks.ts` — Steamworks scraping module
-- `artifacts/api-server/src/lib/excel.ts` — Excel generation with exceljs
+  - `components/DesktopApp.tsx` — Electron-mode shell: Steam login → game picker → pull
+  - `components/StepPickGames.tsx` — game selection + date presets
+  - `components/StepPull.tsx` — pull with live progress + download
+  - `types/desktop.d.ts` — `window.desktop` preload-bridge types
+- `artifacts/api-server/src/` — Express API
+  - `routes/{health,connection,games,pull}.ts`
+  - `lib/steamworks.ts` — scraping + `getDateRangeIso`
+  - `lib/excel.ts` — Excel generation
+- `desktop/` — Electron app
+  - `src/main.ts` — main process: spawns api-server, opens window, handles Steam-login IPC
+  - `src/preload.ts` — exposes `window.desktop` bridge
+  - `scripts/build-main.mjs` — esbuild for main + preload
+  - `scripts/bundle-resources.mjs` — copies api-server + frontend builds into `desktop/dist/{server,web}`
+- `.github/workflows/build-desktop.yml` — Mac/Win/Linux installer build
 
 ## Architecture decisions
 
-- **Two flows, both stateless** — primary: bookmarklet (no cookies hit our server). Legacy: cookie-paste (kept as fallback).
-- **Bookmarklet flow (primary)** — User installs a `javascript:` bookmark whose URL has the entire payload script inlined (~23KB, encoded ~50KB). React install page fetches `/api/bookmarklet.js` once and `encodeURIComponent`s it into the draggable `<a href>`. Inlining is mandatory: Steamworks pages have a strict CSP that silently blocks remote `<script src>` injection. The script runs in the user's already-logged-in Steamworks tab, fetches stat pages with `credentials: 'include'` (using their real IP+session), POSTs raw HTML to our server. Server reuses existing parsers via an `AsyncLocalStorage<Map<url, html>>` "prefetch cache" — `fetchPartnerHtml` returns from the cache instead of hitting the network.
-- **In-overlay 3-step wizard (click 2)** — On `partner.steampowered.com`, after wishlist HTML is fetched, the overlay shows: (1) game picker with parsed Total Wishlists shown per game, sorted by total; (2) date-range picker — Daily / Weekly / Monthly / Yearly / Lifetime presets, or a Custom range with start+end date fields capped at today; (3) confirm + Pull. Sales URLs are computed AFTER the user picks games and dates (so `/configure` returns the right `salesUrls`). Wishlist HTMLs collected pre-picker are stashed on `window.__SWEXP_WISHLIST_HTML__` and submitted together with sales HTML.
-- **Why bookmarklet** — Steam's `login.steampowered.com/jwt/refresh` is IP-bound and silently fails from data-center IPs (Replit, AWS, etc.), bouncing pasted cookies to the login page. Running in the user's browser sidesteps this entirely.
-- **Two-domain handoff** — Steam splits pages between `partner.steamgames.com` (game list, traffic) and `partner.steampowered.com` (wishlists, sales). Browser CORS blocks cross-domain reads, so the bookmarklet must be clicked once on each domain. State is held server-side as a single "active job" (single-user tool); the second click looks up `/api/browser-pull/active` to find the session.
-- **No database** — fully stateless. Pull jobs live in-memory (TTL: 2h). Tab close wipes sessionStorage. Bookmarklet jobs live in `routes/browser-pull.ts` `activeJob` + `completedJobs` Map.
-- **Granularity 'custom'** — `getDateRangeIso(granularity, customRange?)` accepts `customRange: {startIso, endIso}` and returns it verbatim when granularity is `'custom'`. `'yearly'` = last 365 days. Both `steampoweredUrlsFor` and `salesUrlsFor` thread the custom dates through.
-- **JSON body limit bumped to 50mb** — bookmarklet POSTs many ~100KB Steam HTML pages at once.
-- **Per-metric resilience** — each stat module catches errors independently; one failure doesn't kill the whole pull. In bookmarklet mode, missing prefetch entries also degrade gracefully (return empty data, no `session_expired` throw).
-- **Legacy cookie flow caveats** — Steam mints separate cookie pairs for `*.steamgames.com` and `*.steampowered.com`. The fetcher picks the right pair per host. Still subject to the IP-binding issue above.
+- **Electron desktop app is the only supported flow.** The previous bookmarklet and cookie-paste flows were retired because Steam's `login.steampowered.com/jwt/refresh` is IP-bound and silently rejects logins from data-center IPs (Replit, AWS, etc.). Running in the user's own browser process bypasses this entirely.
+- **Single-origin in the desktop window.** Electron main spawns the api-server (`dist/index.mjs`) as a child process with `PORT=0` (random free port) and `FRONTEND_DIR=<bundled web dir>`. The server prints `LISTENING_ON_PORT=<n>` to stdout; the main process reads it, polls `/api/healthz`, then loads `http://127.0.0.1:<port>/`. Express serves both `/api/*` and the static React build, so the renderer talks to a single origin.
+- **Steam login via second BrowserWindow.** Clicking "Sign in" opens a modal `BrowserWindow` on a `persist:steam-login` partition pointed at `partner.steamgames.com/home`. After the user signs in (including 2FA), the main process reads `sessionid` + `steamLoginSecure` cookies for both `steamgames.com` and `steampowered.com` domains and hands them to the renderer via `window.desktop.loginToSteam()`. The renderer then uses them with the existing `/api/connection/test`, `/api/games/list`, `/api/pull/*` endpoints — no protocol changes.
+- **Date presets** — `getDateRangeIso(granularity, customRange?)` supports: `today`, `previous-month` (last calendar month), `previous-year` (last calendar year, Jan 1 → Dec 31), `lifetime` (since 2003), `custom` (caller-provided start/end ISO). Legacy `daily`/`weekly`/`monthly`/`yearly` aliases retained for back-compat.
+- **No database, no persistence.** Pull jobs live in-memory (TTL: 2h). Closing the window discards everything.
+- **Per-metric resilience** — each stat module catches errors independently; one failure doesn't kill the whole pull.
 
 ## Product
 
-- Step 1 — Paste `sessionid` + `steamLoginSecure` cookies, test connection (shows publisher name + game count)
-- Step 2 — Check/uncheck games, pick granularity (Daily/Weekly/Monthly/Lifetime)
-- Step 3 — Pull with live progress bar, cancel button, auto-download on completion, re-download button
-- Built-in tutorial panel with browser-specific DevTools instructions for finding cookies
+- **Step 1 — Sign in to Steam** (Electron only): one-button sign-in via embedded BrowserWindow; cookies captured locally.
+- **Step 2 — Pick games & date range**: checkbox list of base games; pick one of Today / Previous Month / Previous Year / Lifetime / Custom (Custom range capped at today).
+- **Step 3 — Pull**: live progress bar, cancel button, auto-download Excel on completion, re-download button.
 
 ## User preferences
 
-- No saved login, no scheduling, no charts — Excel is the deliverable
+- Excel is the deliverable — no charts, no scheduling, no saved login
 - Each metric is a separate independent module so a break in one doesn't kill others
+- Visible progress at every step; do not stop and ask questions mid-build
 
 ## Gotchas
 
-- Steam may change partner site HTML at any time — each metric module should be maintained independently
-- Steam may rate-limit unusual traffic — 400-600ms polite delays between requests are built in
-- Cookies expire roughly weekly — users re-paste to continue
-- The `>>` character is invalid raw JSX text — must be escaped as `{">>"}`
+- Steam may change partner-site HTML at any time — each metric module should be maintained independently
+- 400-600ms polite delays between requests are built in
 - After each OpenAPI spec change, re-run codegen: `pnpm --filter @workspace/api-spec run codegen`
+- Replit cannot preview Electron in the iframe — verify via `pnpm run typecheck`; binaries must be built locally or via the GitHub Actions workflow
+- electron-builder produces installers only for the host OS unless cross-toolchains (e.g. Wine) are available — use the CI workflow for full Mac+Win+Linux coverage
+- Unsigned builds: macOS users may need `xattr -d com.apple.quarantine "<app>"`; Windows SmartScreen warns. Set `CSC_LINK`/`CSC_KEY_PASSWORD` to sign.
 
 ## Pointers
 
-- See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details
+- `desktop/README.md` — full build, package, and signing instructions
+- `.github/workflows/build-desktop.yml` — CI matrix for cross-platform installers
+- See the `pnpm-workspace` skill for monorepo conventions

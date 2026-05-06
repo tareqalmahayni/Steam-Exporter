@@ -63,6 +63,10 @@ export const PullRequestGranularity = {
   weekly: "weekly",
   monthly: "monthly",
   lifetime: "lifetime",
+  today: "today",
+  "previous-month": "previous-month",
+  "previous-year": "previous-year",
+  custom: "custom",
 } as const;
 
 export interface PullRequest {
@@ -76,6 +80,10 @@ export interface PullRequest {
   appIds: number[];
   /** Time granularity for the pull */
   granularity: PullRequestGranularity;
+  /** Start date (YYYY-MM-DD) when granularity is "custom" */
+  customStartIso?: string;
+  /** End date (YYYY-MM-DD) when granularity is "custom" */
+  customEndIso?: string;
 }
 
 export interface PullStartResult {

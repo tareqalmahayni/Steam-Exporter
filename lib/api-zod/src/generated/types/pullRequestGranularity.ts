@@ -17,4 +17,8 @@ export const PullRequestGranularity = {
   weekly: "weekly",
   monthly: "monthly",
   lifetime: "lifetime",
+  today: "today",
+  "previous-month": "previous-month",
+  "previous-year": "previous-year",
+  custom: "custom",
 } as const;
