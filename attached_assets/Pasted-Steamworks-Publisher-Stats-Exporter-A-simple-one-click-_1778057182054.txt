@@ -1,0 +1,274 @@
+Steamworks Publisher Stats Exporter
+
+A simple, one-click web app that connects to your Steamworks publisher account using session cookies, pulls every available stat for each base game (filtering out Demos / Playtests), and downloads a single Excel file with one tab per game.
+
+How it will work (user flow)
+
+The UI is a clean 3-step flow on a single page — no menus, no settings, no surprises.
+
+Step 1 — Connect
+
+Two input fields side-by-side:
+
+
+
+
+
+sessionid
+
+
+
+steamLoginSecure
+
+Next to each field is a small "How do I find this?" link that opens a built-in tutorial panel (slides out on the right, no leaving the page). The tutorial includes:
+
+
+
+
+
+Plain-language intro: "These cookies let the app read your Steamworks dashboard on your behalf. They live in your browser after you log in."
+
+
+
+Step-by-step with screenshots/illustrations:
+
+
+
+
+
+Open partner.steamgames.com and log in as you normally do
+
+
+
+Open browser DevTools (F12 or right-click → Inspect)
+
+
+
+Go to the Application tab (Chrome/Edge) or Storage tab (Firefox)
+
+
+
+Click Cookies → https://partner.steamgames.com
+
+
+
+Find sessionid — copy its Value
+
+
+
+Find steamLoginSecure — copy its Value
+
+
+
+Paste both into the app
+
+
+
+Browser-specific mini-sections (Chrome, Edge, Firefox, Safari) since the panels look slightly different.
+
+
+
+A safety note: "These cookies stay in your browser tab only. They are sent to our server only while a pull is running, and never saved anywhere."
+
+
+
+A "What if it stops working?" note: cookies expire roughly weekly — just repeat these steps.
+
+A Test connection button verifies the cookies and shows your publisher name and game count, so you know it worked before pulling.
+
+Step 2 — Pick games and range
+
+After a successful test:
+
+
+
+
+
+The app auto-detects every app in your publisher account, automatically excludes anything Steam types as a Demo or Playtest, and as a fallback also excludes any name containing "Demo" or "Playtest".
+
+
+
+A clean checklist of base games appears, all checked by default. You can untick any you don't want.
+
+
+
+Below it, four big preset buttons: Daily (last 30 days), Weekly (last 12 weeks), Monthly (last 12 months), Lifetime. Pick one.
+
+Step 3 — Pull
+
+One large Pull data button. While running:
+
+
+
+
+
+A progress bar with live status ("Pulling 3 of 14 — Cool Game Name · Wishlists")
+
+
+
+Estimated time remaining
+
+
+
+Cancel button
+
+When done, the Excel file downloads automatically. A Download again button stays available so you can re-save the same pull without re-fetching.
+
+Metrics pulled per game
+
+Every section visible in the Steamworks game dashboard, including:
+
+
+
+
+
+Wishlists — adds, deletes, purchases & gifts, balance, by region
+
+
+
+Store page traffic — visits, unique visitors, impressions, tracked views
+
+
+
+Traffic breakdown — by source (search, discovery queue, tags, recommendations, external, UTM links, etc.)
+
+
+
+UTM / tracking links — per-link clicks and conversions
+
+
+
+Sales / units / gross & net revenue — when visible on the account
+
+
+
+Followers — adds, total
+
+
+
+Reviews — totals and recent score (snapshot)
+
+
+
+Region breakdowns wherever Steam shows them
+
+If a section is unavailable for a game (e.g. unreleased title has no sales), the app records "n/a" rather than failing the whole pull.
+
+Excel output structure
+
+A single .xlsx named steamworks_pull_YYYY-MM-DD_<granularity>.xlsx containing:
+
+Tab 1            Summary
+                 Dashboard: one row per game with totals for the selected
+                 period (wishlists net, visits, impressions, followers
+                 added, units, gross revenue if available) + a Totals row.
+
+Tabs 2 … N+1     One tab per game (named after the game)
+                 Every metric for that game in clearly-labeled sections,
+                 stacked vertically:
+                   - Wishlists (dates as rows)
+                   - Visits & Impressions (dates as rows)
+                   - Traffic Breakdown (sources as rows)
+                   - UTM Links (links as rows)
+                   - Sales (dates as rows, if available)
+                   - Followers (dates as rows)
+                   - Reviews (snapshot)
+                   - Region breakdowns
+
+Last tab         Pull Info
+                 Date pulled, granularity, range, list of games included,
+                 list of skipped Demo/Playtest apps, any per-game errors.
+
+Tab names are sanitised to fit Excel's 31-character limit and to remove illegal characters. If two games would produce the same tab name, a numeric suffix is added.
+
+Formatting: bold headers, frozen top row, comma-separated thousands, currency formatted where applicable, dates as real Excel dates, zero values shown as "—".
+
+Key UX details
+
+
+
+
+
+Cookies are session-only — stored in browser sessionStorage, cleared on tab close. Never written to a server database.
+
+
+
+Tutorial is always one click away — the "How do I find this?" link sits right next to each input and stays accessible after first connect.
+
+
+
+Cookie expiry handling — if Steamworks returns a login redirect mid-pull, the pull stops cleanly and the UI says "Session expired — paste fresh cookies (tutorial here)" with the tutorial link.
+
+
+
+Resilience — each game is fetched independently; one failure doesn't kill the run. Failed games are listed in Pull Info.
+
+
+
+Re-download — last pull is kept in memory until you start a new pull or close the tab.
+
+Out of scope (v1)
+
+
+
+
+
+No saved login (you re-paste cookies when they expire, ~weekly)
+
+
+
+No scheduling / automatic recurring pulls
+
+
+
+No charts inside the app — Excel is the deliverable
+
+
+
+No multi-user accounts
+
+
+
+No historical database — each pull is independent
+
+Risks you should know about
+
+
+
+
+
+Steam may change the partner site HTML at any time and break specific scrapers. Each metric is an independent module so a break in one section doesn't kill the others.
+
+
+
+Steam may rate-limit unusual traffic. A polite delay between requests is built in; a full pull on a publisher with many games may take a couple of minutes.
+
+
+
+Terms of Service — automated reading of your own partner data is a gray area; use on accounts you own.
+
+Technical notes (for reference)
+
+
+
+
+
+Frontend: TanStack Start single-route stepper UI built with existing shadcn/ui components; tutorial panel is a Sheet (slide-over) with screenshots stored in src/assets/tutorial/.
+
+
+
+Backend: TanStack createServerFn handlers receive cookies in the request body, fetch Steamworks pages and JSON endpoints, parse with cheerio plus the JSON Steamworks already exposes, and stream progress back.
+
+
+
+Excel generation: exceljs on the server; returned as a blob the browser downloads.
+
+
+
+Game filtering: app type from Steamworks (game vs demo vs dlc vs playtest) is the primary filter; name-based "Demo" / "Playtest" suffix check is the fallback.
+
+
+
+No database, no Lovable Cloud needed for v1.
+
+After you approve, I'll build it end-to-end: stepper UI, tutorial panel with browser-specific screenshots, scraping modules per metric, per-game Excel tab generator, and live progress streaming.

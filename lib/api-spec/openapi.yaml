@@ -3,13 +3,19 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: Steamworks Publisher Stats Exporter API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: connection
+    description: Steamworks connection operations
+  - name: games
+    description: Game listing operations
+  - name: pull
+    description: Data pull operations
 paths:
   /healthz:
     get:
@@ -24,6 +30,182 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /connection/test:
+    post:
+      operationId: testConnection
+      tags: [connection]
+      summary: Test Steamworks cookies
+      description: Verifies session cookies and returns publisher info
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConnectionCredentials"
+      responses:
+        "200":
+          description: Connection successful
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConnectionResult"
+        "401":
+          description: Invalid cookies
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /games/list:
+    post:
+      operationId: listGames
+      tags: [games]
+      summary: List publisher games
+      description: Returns all base games (excluding demos and playtests) for the publisher
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConnectionCredentials"
+      responses:
+        "200":
+          description: List of games
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GamesListResult"
+        "401":
+          description: Session expired
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /pull/start:
+    post:
+      operationId: startPull
+      tags: [pull]
+      summary: Start a data pull job
+      description: Initiates a data pull for selected games and returns a job ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PullRequest"
+      responses:
+        "200":
+          description: Pull job started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PullStartResult"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /pull/status/{jobId}:
+    get:
+      operationId: getPullStatus
+      tags: [pull]
+      summary: Get pull job status
+      description: Returns current status and progress of a pull job
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Job status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PullStatus"
+        "404":
+          description: Job not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /pull/cancel/{jobId}:
+    post:
+      operationId: cancelPull
+      tags: [pull]
+      summary: Cancel a pull job
+      description: Cancels an in-progress pull job
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Job cancelled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "404":
+          description: Job not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /pull/download/{jobId}:
+    get:
+      operationId: downloadPull
+      tags: [pull]
+      summary: Download pull Excel file
+      description: Downloads the generated Excel file for a completed pull job
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Excel file download
+          content:
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema:
+                type: string
+                format: binary
+        "404":
+          description: Job not found or not complete
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +216,161 @@ components:
       required:
         - status
 
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+      required:
+        - error
+        - message
+
+    SuccessResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+      required:
+        - success
+        - message
+
+    ConnectionCredentials:
+      type: object
+      properties:
+        sessionid:
+          type: string
+          description: Steam sessionid cookie value
+        steamLoginSecure:
+          type: string
+          description: Steam steamLoginSecure cookie value
+      required:
+        - sessionid
+        - steamLoginSecure
+
+    ConnectionResult:
+      type: object
+      properties:
+        publisherName:
+          type: string
+          description: Publisher account name
+        gameCount:
+          type: integer
+          description: Number of base games (excluding demos/playtests)
+      required:
+        - publisherName
+        - gameCount
+
+    GameInfo:
+      type: object
+      properties:
+        appId:
+          type: integer
+          description: Steam App ID
+        name:
+          type: string
+          description: Game name
+        type:
+          type: string
+          description: App type (game, dlc, etc.)
+      required:
+        - appId
+        - name
+        - type
+
+    GamesListResult:
+      type: object
+      properties:
+        games:
+          type: array
+          items:
+            $ref: "#/components/schemas/GameInfo"
+        skipped:
+          type: array
+          items:
+            $ref: "#/components/schemas/GameInfo"
+          description: Apps excluded (demos, playtests)
+      required:
+        - games
+        - skipped
+
+    PullRequest:
+      type: object
+      properties:
+        sessionid:
+          type: string
+        steamLoginSecure:
+          type: string
+        appIds:
+          type: array
+          items:
+            type: integer
+          description: App IDs to pull data for
+        granularity:
+          type: string
+          enum: [daily, weekly, monthly, lifetime]
+          description: Time granularity for the pull
+      required:
+        - sessionid
+        - steamLoginSecure
+        - appIds
+        - granularity
+
+    PullStartResult:
+      type: object
+      properties:
+        jobId:
+          type: string
+          description: Unique job identifier for polling
+      required:
+        - jobId
+
+    PullProgressItem:
+      type: object
+      properties:
+        gameIndex:
+          type: integer
+        totalGames:
+          type: integer
+        gameName:
+          type: string
+        metric:
+          type: string
+        estimatedSecondsRemaining:
+          type: integer
+      required:
+        - gameIndex
+        - totalGames
+        - gameName
+        - metric
+
+    PullStatus:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [running, completed, cancelled, failed, session_expired]
+        progress:
+          $ref: "#/components/schemas/PullProgressItem"
+        errorMessage:
+          type: string
+        gameErrors:
+          type: array
+          items:
+            type: object
+            properties:
+              appId:
+                type: integer
+              gameName:
+                type: string
+              error:
+                type: string
+            required:
+              - appId
+              - gameName
+              - error
+      required:
+        - status
