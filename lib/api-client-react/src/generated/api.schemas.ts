@@ -20,10 +20,14 @@ export interface SuccessResponse {
 }
 
 export interface ConnectionCredentials {
-  /** Steam sessionid cookie value */
+  /** sessionid cookie from partner.steamgames.com */
   sessionid: string;
-  /** Steam steamLoginSecure cookie value */
+  /** steamLoginSecure cookie from partner.steamgames.com */
   steamLoginSecure: string;
+  /** sessionid cookie from partner.steampowered.com (or store.steampowered.com) */
+  partnerSessionid: string;
+  /** steamLoginSecure cookie from partner.steampowered.com (or store.steampowered.com) */
+  partnerSteamLoginSecure: string;
 }
 
 export interface ConnectionResult {
@@ -64,6 +68,10 @@ export const PullRequestGranularity = {
 export interface PullRequest {
   sessionid: string;
   steamLoginSecure: string;
+  /** sessionid from partner.steampowered.com */
+  partnerSessionid: string;
+  /** steamLoginSecure from partner.steampowered.com */
+  partnerSteamLoginSecure: string;
   /** App IDs to pull data for */
   appIds: number[];
   /** Time granularity for the pull */

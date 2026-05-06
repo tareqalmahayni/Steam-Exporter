@@ -20,10 +20,22 @@ export const HealthCheckResponse = zod.object({
  * @summary Test Steamworks cookies
  */
 export const TestConnectionBody = zod.object({
-  sessionid: zod.string().describe("Steam sessionid cookie value"),
+  sessionid: zod
+    .string()
+    .describe("sessionid cookie from partner.steamgames.com"),
   steamLoginSecure: zod
     .string()
-    .describe("Steam steamLoginSecure cookie value"),
+    .describe("steamLoginSecure cookie from partner.steamgames.com"),
+  partnerSessionid: zod
+    .string()
+    .describe(
+      "sessionid cookie from partner.steampowered.com (or store.steampowered.com)",
+    ),
+  partnerSteamLoginSecure: zod
+    .string()
+    .describe(
+      "steamLoginSecure cookie from partner.steampowered.com (or store.steampowered.com)",
+    ),
 });
 
 export const TestConnectionResponse = zod.object({
@@ -38,10 +50,22 @@ export const TestConnectionResponse = zod.object({
  * @summary List publisher games
  */
 export const ListGamesBody = zod.object({
-  sessionid: zod.string().describe("Steam sessionid cookie value"),
+  sessionid: zod
+    .string()
+    .describe("sessionid cookie from partner.steamgames.com"),
   steamLoginSecure: zod
     .string()
-    .describe("Steam steamLoginSecure cookie value"),
+    .describe("steamLoginSecure cookie from partner.steamgames.com"),
+  partnerSessionid: zod
+    .string()
+    .describe(
+      "sessionid cookie from partner.steampowered.com (or store.steampowered.com)",
+    ),
+  partnerSteamLoginSecure: zod
+    .string()
+    .describe(
+      "steamLoginSecure cookie from partner.steampowered.com (or store.steampowered.com)",
+    ),
 });
 
 export const ListGamesResponse = zod.object({
@@ -70,6 +94,12 @@ export const ListGamesResponse = zod.object({
 export const StartPullBody = zod.object({
   sessionid: zod.string(),
   steamLoginSecure: zod.string(),
+  partnerSessionid: zod
+    .string()
+    .describe("sessionid from partner.steampowered.com"),
+  partnerSteamLoginSecure: zod
+    .string()
+    .describe("steamLoginSecure from partner.steampowered.com"),
   appIds: zod.array(zod.number()).describe("App IDs to pull data for"),
   granularity: zod
     .enum(["daily", "weekly", "monthly", "lifetime"])

@@ -7,8 +7,12 @@
  */
 
 export interface ConnectionCredentials {
-  /** Steam sessionid cookie value */
+  /** sessionid cookie from partner.steamgames.com */
   sessionid: string;
-  /** Steam steamLoginSecure cookie value */
+  /** steamLoginSecure cookie from partner.steamgames.com */
   steamLoginSecure: string;
+  /** sessionid cookie from partner.steampowered.com (or store.steampowered.com) */
+  partnerSessionid: string;
+  /** steamLoginSecure cookie from partner.steampowered.com (or store.steampowered.com) */
+  partnerSteamLoginSecure: string;
 }

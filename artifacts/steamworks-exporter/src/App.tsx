@@ -15,7 +15,12 @@ const queryClient = new QueryClient();
 
 function StepperApp() {
   const [step, setStep] = useState<number>(1);
-  const [credentials, setCredentials] = useState({ sessionid: "", steamLoginSecure: "" });
+  const [credentials, setCredentials] = useState({
+    sessionid: "",
+    steamLoginSecure: "",
+    partnerSessionid: "",
+    partnerSteamLoginSecure: "",
+  });
   const [publisherName, setPublisherName] = useState<string | null>(null);
   
   const [selectedGames, setSelectedGames] = useState<number[]>([]);
@@ -25,15 +30,24 @@ function StepperApp() {
   useEffect(() => {
     const savedSessionId = sessionStorage.getItem("steam_sessionid");
     const savedLoginSecure = sessionStorage.getItem("steam_login_secure");
+    const savedPartnerSessionId = sessionStorage.getItem("steam_partner_sessionid");
+    const savedPartnerLoginSecure = sessionStorage.getItem("steam_partner_login_secure");
     if (savedSessionId && savedLoginSecure) {
-      setCredentials({ sessionid: savedSessionId, steamLoginSecure: savedLoginSecure });
+      setCredentials({
+        sessionid: savedSessionId,
+        steamLoginSecure: savedLoginSecure,
+        partnerSessionid: savedPartnerSessionId || "",
+        partnerSteamLoginSecure: savedPartnerLoginSecure || "",
+      });
     }
   }, []);
 
-  const handleConnectSuccess = (name: string, count: number) => {
+  const handleConnectSuccess = (name: string, _count: number) => {
     setPublisherName(name);
     sessionStorage.setItem("steam_sessionid", credentials.sessionid);
     sessionStorage.setItem("steam_login_secure", credentials.steamLoginSecure);
+    sessionStorage.setItem("steam_partner_sessionid", credentials.partnerSessionid);
+    sessionStorage.setItem("steam_partner_login_secure", credentials.partnerSteamLoginSecure);
   };
 
   const handleReset = () => {

@@ -38,6 +38,8 @@ interface Job {
   cancelled: boolean;
   sessionid: string;
   steamLoginSecure: string;
+  partnerSessionid: string;
+  partnerSteamLoginSecure: string;
   appIds: number[];
   granularity: string;
 }
@@ -65,7 +67,7 @@ router.post("/pull/start", async (req, res): Promise<void> => {
     return;
   }
 
-  const { sessionid, steamLoginSecure, appIds, granularity } = parsed.data;
+  const { sessionid, steamLoginSecure, partnerSessionid, partnerSteamLoginSecure, appIds, granularity } = parsed.data;
 
   if (!appIds || appIds.length === 0) {
     res.status(400).json({ error: "no_games", message: "At least one game must be selected" });
@@ -79,6 +81,8 @@ router.post("/pull/start", async (req, res): Promise<void> => {
     cancelled: false,
     sessionid,
     steamLoginSecure,
+    partnerSessionid,
+    partnerSteamLoginSecure,
     appIds,
     granularity,
     createdAt: Date.now(),
@@ -113,7 +117,9 @@ router.post("/pull/start", async (req, res): Promise<void> => {
         (progress) => {
           job.progress = progress;
         },
-        () => job.cancelled
+        () => job.cancelled,
+        partnerSessionid,
+        partnerSteamLoginSecure
       );
 
       // Log a summary of what was actually collected so we can diagnose empty data
@@ -243,9 +249,11 @@ router.get("/pull/download/:jobId", (req, res): void => {
 // Diagnostic: probe all stat endpoints for one appId and return raw responses.
 // POST /api/pull/probe  { sessionid, steamLoginSecure, appId, granularity }
 router.post("/pull/probe", async (req, res): Promise<void> => {
-  const { sessionid, steamLoginSecure, appId, granularity } = req.body as {
+  const { sessionid, steamLoginSecure, partnerSessionid, partnerSteamLoginSecure, appId, granularity } = req.body as {
     sessionid?: string;
     steamLoginSecure?: string;
+    partnerSessionid?: string;
+    partnerSteamLoginSecure?: string;
     appId?: number;
     granularity?: string;
   };
@@ -256,7 +264,7 @@ router.post("/pull/probe", async (req, res): Promise<void> => {
   }
 
   try {
-    const results = await probeStats(Number(appId), sessionid, steamLoginSecure, granularity || "monthly");
+    const results = await probeStats(Number(appId), sessionid, steamLoginSecure, granularity || "monthly", partnerSessionid, partnerSteamLoginSecure);
     res.json({ appId, granularity: granularity || "monthly", results });
   } catch (e) {
     req.log.error({ err: e }, "Stats probe failed");

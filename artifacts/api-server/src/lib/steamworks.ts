@@ -806,13 +806,23 @@ async function fetchPartnerHtml(
   label: string,
   url: string,
   sessionid: string,
-  steamLoginSecure: string
+  steamLoginSecure: string,
+  partnerSessionid?: string,
+  partnerSteamLoginSecure?: string
 ): Promise<string> {
+  // Pick the cookie pair scoped to the right top-level domain.
+  // partner.steampowered.com / login.steampowered.com / store.steampowered.com
+  // need cookies issued for *.steampowered.com. partner.steamgames.com needs
+  // cookies issued for *.steamgames.com. Steam mints these as separate cookies.
+  const isSteampoweredHost = url.startsWith(BASE_PARTNER);
+  const useSid = isSteampoweredHost && partnerSessionid ? partnerSessionid : sessionid;
+  const useSecure = isSteampoweredHost && partnerSteamLoginSecure ? partnerSteamLoginSecure : steamLoginSecure;
+
   const jar = new Map<string, string>([
-    ["sessionid", sessionid],
-    ["steamLoginSecure", normalizeSteamLoginSecure(steamLoginSecure)],
+    ["sessionid", useSid],
+    ["steamLoginSecure", normalizeSteamLoginSecure(useSecure)],
   ]);
-  const refererBase = url.startsWith(BASE_PARTNER) ? BASE_PARTNER : BASE;
+  const refererBase = isSteampoweredHost ? BASE_PARTNER : BASE;
 
   let currentUrl = url;
   let hopCount = 0;
@@ -983,11 +993,13 @@ async function fetchWishlists(
   appId: number,
   sessionid: string,
   steamLoginSecure: string,
-  _granularity: string
+  _granularity: string,
+  partnerSessionid?: string,
+  partnerSteamLoginSecure?: string
 ): Promise<StatRow[]> {
   try {
     const url = `${BASE_PARTNER}/app/wishlist/${appId}/`;
-    const html = await fetchPartnerHtml("wishlist", url, sessionid, steamLoginSecure);
+    const html = await fetchPartnerHtml("wishlist", url, sessionid, steamLoginSecure, partnerSessionid, partnerSteamLoginSecure);
     if (!html) return [];
 
     const { tables, stats } = extractTablesAndStats(html);
@@ -1028,12 +1040,14 @@ async function fetchSales(
   appId: number,
   sessionid: string,
   steamLoginSecure: string,
-  granularity: string
+  granularity: string,
+  partnerSessionid?: string,
+  partnerSteamLoginSecure?: string
 ): Promise<StatRow[]> {
   try {
     const { startIso, endIso } = getDateRangeIso(granularity);
     const url = `${BASE_PARTNER}/app/details/${appId}/?dateStart=${startIso}&dateEnd=${endIso}`;
-    const html = await fetchPartnerHtml("sales", url, sessionid, steamLoginSecure);
+    const html = await fetchPartnerHtml("sales", url, sessionid, steamLoginSecure, partnerSessionid, partnerSteamLoginSecure);
     if (!html) return [];
 
     const { tables, stats } = extractTablesAndStats(html);
@@ -1082,14 +1096,16 @@ async function getTrafficStats(
   appId: number,
   sessionid: string,
   steamLoginSecure: string,
-  granularity: string
+  granularity: string,
+  partnerSessionid?: string,
+  partnerSteamLoginSecure?: string
 ) {
   const cacheKey = `${appId}|${granularity}`;
   const cached = trafficStatsCache.get(cacheKey);
   if (cached) return cached;
 
   const url = `${BASE}/apps/navtrafficstats/${appId}`;
-  const html = await fetchPartnerHtml("navtrafficstats", url, sessionid, steamLoginSecure);
+  const html = await fetchPartnerHtml("navtrafficstats", url, sessionid, steamLoginSecure, partnerSessionid, partnerSteamLoginSecure);
   if (!html) {
     const empty = { tables: [], stats: [] };
     trafficStatsCache.set(cacheKey, empty);
@@ -1105,10 +1121,12 @@ async function fetchVisits(
   appId: number,
   sessionid: string,
   steamLoginSecure: string,
-  granularity: string
+  granularity: string,
+  partnerSessionid?: string,
+  partnerSteamLoginSecure?: string
 ): Promise<StatRow[]> {
   try {
-    const { tables, stats } = await getTrafficStats(appId, sessionid, steamLoginSecure, granularity);
+    const { tables, stats } = await getTrafficStats(appId, sessionid, steamLoginSecure, granularity, partnerSessionid, partnerSteamLoginSecure);
 
     // Visits table: has columns like Date, Visits, Unique Visitors, Impressions
     for (const { headers, rows } of tables) {
@@ -1147,10 +1165,12 @@ async function fetchTrafficBreakdown(
   appId: number,
   sessionid: string,
   steamLoginSecure: string,
-  granularity: string
+  granularity: string,
+  partnerSessionid?: string,
+  partnerSteamLoginSecure?: string
 ): Promise<StatRow[]> {
   try {
-    const { tables } = await getTrafficStats(appId, sessionid, steamLoginSecure, granularity);
+    const { tables } = await getTrafficStats(appId, sessionid, steamLoginSecure, granularity, partnerSessionid, partnerSteamLoginSecure);
 
     for (const { headers, rows } of tables) {
       const isBreakdown = headers.some((h) => matchHeader(h, [/source/, /referrer/, /^from$/, /channel/, /category/]));
@@ -1182,11 +1202,13 @@ async function fetchFollowers(
   appId: number,
   sessionid: string,
   steamLoginSecure: string,
-  _granularity: string
+  _granularity: string,
+  partnerSessionid?: string,
+  partnerSteamLoginSecure?: string
 ): Promise<StatRow[]> {
   try {
     const url = `${BASE_PARTNER}/app/wishlist/${appId}/`;
-    const html = await fetchPartnerHtml("followers", url, sessionid, steamLoginSecure);
+    const html = await fetchPartnerHtml("followers", url, sessionid, steamLoginSecure, partnerSessionid, partnerSteamLoginSecure);
     if (!html) return [];
 
     const { tables, stats } = extractTablesAndStats(html);
@@ -1265,7 +1287,9 @@ export async function probeStats(
   appId: number,
   sessionid: string,
   steamLoginSecure: string,
-  granularity: string
+  granularity: string,
+  partnerSessionid?: string,
+  partnerSteamLoginSecure?: string
 ): Promise<ProbeResult[]> {
   const { startIso, endIso } = getDateRangeIso(granularity);
   const results: ProbeResult[] = [];
@@ -1288,7 +1312,7 @@ export async function probeStats(
   for (const { metric, url } of probes) {
     try {
       // Uses the same JWT-refresh-aware fetcher as the real pull.
-      const text = await fetchPartnerHtml(`probe:${metric}`, url, sessionid, steamLoginSecure);
+      const text = await fetchPartnerHtml(`probe:${metric}`, url, sessionid, steamLoginSecure, partnerSessionid, partnerSteamLoginSecure);
       const { tables, stats } = extractTablesAndStats(text);
       const parsedRowCount = tables.reduce((sum, t) => sum + t.rows.length, 0);
       const snippet =
@@ -1340,7 +1364,9 @@ export async function pullAllStats(
   steamLoginSecure: string,
   granularity: string,
   onProgress: ProgressCallback,
-  isCancelled: CancelCheck
+  isCancelled: CancelCheck,
+  partnerSessionid?: string,
+  partnerSteamLoginSecure?: string
 ): Promise<GameStats[]> {
   const results: GameStats[] = [];
   const METRICS = ["Wishlists", "Visits", "Traffic Breakdown", "Sales", "Followers", "Reviews"];
@@ -1370,23 +1396,23 @@ export async function pullAllStats(
 
     try {
       report("Wishlists");
-      stats.wishlistData = await fetchWishlists(appId, sessionid, steamLoginSecure, granularity);
+      stats.wishlistData = await fetchWishlists(appId, sessionid, steamLoginSecure, granularity, partnerSessionid, partnerSteamLoginSecure);
       await sleep(400);
 
       if (isCancelled()) break;
       report("Visits & Impressions");
-      stats.visitsData = await fetchVisits(appId, sessionid, steamLoginSecure, granularity);
+      stats.visitsData = await fetchVisits(appId, sessionid, steamLoginSecure, granularity, partnerSessionid, partnerSteamLoginSecure);
       await sleep(400);
 
       if (isCancelled()) break;
       report("Traffic Breakdown");
-      stats.trafficData = await fetchTrafficBreakdown(appId, sessionid, steamLoginSecure, granularity);
+      stats.trafficData = await fetchTrafficBreakdown(appId, sessionid, steamLoginSecure, granularity, partnerSessionid, partnerSteamLoginSecure);
       await sleep(400);
 
       if (isCancelled()) break;
       report("Sales");
       try {
-        stats.salesData = await fetchSales(appId, sessionid, steamLoginSecure, granularity);
+        stats.salesData = await fetchSales(appId, sessionid, steamLoginSecure, granularity, partnerSessionid, partnerSteamLoginSecure);
       } catch {
         stats.salesData = [];
         errors.push("Sales data unavailable");
@@ -1395,7 +1421,7 @@ export async function pullAllStats(
 
       if (isCancelled()) break;
       report("Followers");
-      stats.followersData = await fetchFollowers(appId, sessionid, steamLoginSecure, granularity);
+      stats.followersData = await fetchFollowers(appId, sessionid, steamLoginSecure, granularity, partnerSessionid, partnerSteamLoginSecure);
       await sleep(400);
 
       if (isCancelled()) break;

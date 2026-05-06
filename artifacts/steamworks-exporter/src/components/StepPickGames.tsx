@@ -10,7 +10,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 
 interface StepPickGamesProps {
-  credentials: { sessionid: string; steamLoginSecure: string };
+  credentials: { sessionid: string; steamLoginSecure: string; partnerSessionid: string; partnerSteamLoginSecure: string };
   selectedGames: number[];
   setSelectedGames: (appIds: number[]) => void;
   granularity: PullRequestGranularity;

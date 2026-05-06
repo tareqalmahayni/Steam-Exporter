@@ -31,16 +31,31 @@ export function TutorialPanel({ children }: { children?: React.ReactNode }) {
           </AlertDescription>
         </Alert>
 
+        <Alert className="mb-6 bg-primary/5 border-primary/30">
+          <AlertCircle className="h-4 w-4 text-primary" />
+          <AlertDescription className="text-xs text-foreground ml-2 space-y-1">
+            <p className="font-medium">You need 4 cookies total — 2 from each Steam domain:</p>
+            <ul className="list-disc list-inside text-muted-foreground">
+              <li><span className="font-mono">partner.steamgames.com</span> → <span className="font-mono">sessionid</span> + <span className="font-mono">steamLoginSecure</span></li>
+              <li><span className="font-mono">partner.steampowered.com</span> → <span className="font-mono">sessionid</span> + <span className="font-mono">steamLoginSecure</span></li>
+            </ul>
+            <p className="text-muted-foreground pt-1">Steam mints these as separate cookies. The cookies on one domain are not valid on the other.</p>
+          </AlertDescription>
+        </Alert>
+
         <div className="space-y-6">
           <div className="space-y-2">
-            <h3 className="font-semibold text-sm uppercase tracking-wider text-muted-foreground">Step 1: Log In</h3>
-            <p className="text-sm">
-              Open a new tab and log in to <a href="https://partner.steamgames.com" target="_blank" rel="noreferrer" className="text-primary hover:underline">Steamworks</a>.
-            </p>
+            <h3 className="font-semibold text-sm uppercase tracking-wider text-muted-foreground">Step 1: Log In to Both Sites</h3>
+            <p className="text-sm">In your browser, log in to both:</p>
+            <ul className="list-disc list-inside text-sm space-y-1 pl-1">
+              <li><a href="https://partner.steamgames.com" target="_blank" rel="noreferrer" className="text-primary hover:underline font-mono">partner.steamgames.com</a></li>
+              <li><a href="https://partner.steampowered.com" target="_blank" rel="noreferrer" className="text-primary hover:underline font-mono">partner.steampowered.com</a></li>
+            </ul>
+            <p className="text-xs text-muted-foreground">(Logging in to one usually logs you in to the other automatically — but each site stores its own cookies.)</p>
           </div>
 
           <div className="space-y-3">
-            <h3 className="font-semibold text-sm uppercase tracking-wider text-muted-foreground">Step 2: Find Cookies</h3>
+            <h3 className="font-semibold text-sm uppercase tracking-wider text-muted-foreground">Step 2: Open DevTools</h3>
             <Tabs defaultValue="chrome" className="w-full">
               <TabsList className="grid grid-cols-4 mb-4">
                 <TabsTrigger value="chrome">Chrome</TabsTrigger>
@@ -48,13 +63,12 @@ export function TutorialPanel({ children }: { children?: React.ReactNode }) {
                 <TabsTrigger value="firefox">Firefox</TabsTrigger>
                 <TabsTrigger value="safari">Safari</TabsTrigger>
               </TabsList>
-              
+
               <TabsContent value="chrome" className="text-sm space-y-2">
                 <ol className="list-decimal list-inside space-y-2 pl-1">
                   <li>Press <kbd className="bg-secondary px-1.5 py-0.5 rounded text-xs font-mono">F12</kbd> or right-click and select <strong>Inspect</strong></li>
-                  <li>Go to the <strong>Application</strong> tab (might be hidden behind the <code>{">>"}</code> icon)</li>
+                  <li>Go to the <strong>Application</strong> tab (may be hidden behind the <code>{">>"}</code> icon)</li>
                   <li>In the left sidebar, expand <strong>Cookies</strong></li>
-                  <li>Click on <strong>https://partner.steamgames.com</strong></li>
                 </ol>
               </TabsContent>
 
@@ -63,7 +77,6 @@ export function TutorialPanel({ children }: { children?: React.ReactNode }) {
                   <li>Press <kbd className="bg-secondary px-1.5 py-0.5 rounded text-xs font-mono">F12</kbd> or right-click and select <strong>Inspect</strong></li>
                   <li>Go to the <strong>Application</strong> tab</li>
                   <li>In the left sidebar, expand <strong>Cookies</strong></li>
-                  <li>Click on <strong>https://partner.steamgames.com</strong></li>
                 </ol>
               </TabsContent>
 
@@ -72,7 +85,6 @@ export function TutorialPanel({ children }: { children?: React.ReactNode }) {
                   <li>Press <kbd className="bg-secondary px-1.5 py-0.5 rounded text-xs font-mono">F12</kbd> or right-click and select <strong>Inspect</strong></li>
                   <li>Go to the <strong>Storage</strong> tab</li>
                   <li>In the left sidebar, expand <strong>Cookies</strong></li>
-                  <li>Click on <strong>https://partner.steamgames.com</strong></li>
                 </ol>
               </TabsContent>
 
@@ -87,13 +99,26 @@ export function TutorialPanel({ children }: { children?: React.ReactNode }) {
             </Tabs>
           </div>
 
-          <div className="space-y-2">
-            <h3 className="font-semibold text-sm uppercase tracking-wider text-muted-foreground">Step 3: Copy Values</h3>
-            <p className="text-sm">Look for these two specific rows in the table, double-click their <strong>Value</strong> column, and paste them into the tool:</p>
-            <ul className="list-disc list-inside text-sm space-y-1 pl-1 font-mono text-muted-foreground">
-              <li>sessionid</li>
-              <li>steamLoginSecure</li>
-            </ul>
+          <div className="space-y-3">
+            <h3 className="font-semibold text-sm uppercase tracking-wider text-muted-foreground">Step 3: Copy 4 Values</h3>
+
+            <div className="rounded-md border border-border bg-background/50 p-3 space-y-2">
+              <p className="text-xs font-semibold text-primary">From <span className="font-mono">https://partner.steamgames.com</span>:</p>
+              <ul className="list-disc list-inside text-xs space-y-1 pl-1 font-mono text-muted-foreground">
+                <li>sessionid</li>
+                <li>steamLoginSecure</li>
+              </ul>
+            </div>
+
+            <div className="rounded-md border border-border bg-background/50 p-3 space-y-2">
+              <p className="text-xs font-semibold text-primary">From <span className="font-mono">https://partner.steampowered.com</span>:</p>
+              <ul className="list-disc list-inside text-xs space-y-1 pl-1 font-mono text-muted-foreground">
+                <li>sessionid</li>
+                <li>steamLoginSecure</li>
+              </ul>
+            </div>
+
+            <p className="text-xs text-muted-foreground">In the cookies panel, click on each domain in turn, double-click the <strong>Value</strong> column for each row, and paste it into the matching field in the tool.</p>
           </div>
         </div>
       </SheetContent>

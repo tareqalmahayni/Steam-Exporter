@@ -15,7 +15,7 @@ import { TutorialPanel } from "./TutorialPanel";
 import { useQueryClient } from "@tanstack/react-query";
 
 interface StepPullProps {
-  credentials: { sessionid: string; steamLoginSecure: string };
+  credentials: { sessionid: string; steamLoginSecure: string; partnerSessionid: string; partnerSteamLoginSecure: string };
   selectedGames: number[];
   granularity: PullRequestGranularity;
   onReset: () => void;

@@ -10,6 +10,10 @@ import type { PullRequestGranularity } from "./pullRequestGranularity";
 export interface PullRequest {
   sessionid: string;
   steamLoginSecure: string;
+  /** sessionid from partner.steampowered.com */
+  partnerSessionid: string;
+  /** steamLoginSecure from partner.steampowered.com */
+  partnerSteamLoginSecure: string;
   /** App IDs to pull data for */
   appIds: number[];
   /** Time granularity for the pull */

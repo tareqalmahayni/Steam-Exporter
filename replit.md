@@ -42,6 +42,7 @@ A single-page web app that connects to your Steamworks publisher account using s
 - **Per-metric resilience** — each stat module (wishlists, visits, sales, etc.) catches errors independently; one failure doesn't kill the whole pull.
 - **Cookies stay client-side** — sessionStorage only, cleared on tab close, never persisted to server DB.
 - **Steamworks scraping** — HTML scraping via cheerio + JSON fallback endpoints. Each metric independently tries both methods.
+- **Two cookie pairs required** — Steam mints separate `sessionid`/`steamLoginSecure` cookies for `partner.steamgames.com` (used to list games) and `partner.steampowered.com` (used to pull stats). The fetcher picks the right pair per URL host. JWT refresh on `login.steampowered.com` will silently fail to mint a fresh JWT if the wrong-domain cookies are sent, leaving the user bounced to the real login page.
 
 ## Product
 

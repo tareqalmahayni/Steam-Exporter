@@ -243,13 +243,21 @@ components:
       properties:
         sessionid:
           type: string
-          description: Steam sessionid cookie value
+          description: sessionid cookie from partner.steamgames.com
         steamLoginSecure:
           type: string
-          description: Steam steamLoginSecure cookie value
+          description: steamLoginSecure cookie from partner.steamgames.com
+        partnerSessionid:
+          type: string
+          description: sessionid cookie from partner.steampowered.com (or store.steampowered.com)
+        partnerSteamLoginSecure:
+          type: string
+          description: steamLoginSecure cookie from partner.steampowered.com (or store.steampowered.com)
       required:
         - sessionid
         - steamLoginSecure
+        - partnerSessionid
+        - partnerSteamLoginSecure
 
     ConnectionResult:
       type: object
@@ -304,6 +312,12 @@ components:
           type: string
         steamLoginSecure:
           type: string
+        partnerSessionid:
+          type: string
+          description: sessionid from partner.steampowered.com
+        partnerSteamLoginSecure:
+          type: string
+          description: steamLoginSecure from partner.steampowered.com
         appIds:
           type: array
           items:
@@ -316,6 +330,8 @@ components:
       required:
         - sessionid
         - steamLoginSecure
+        - partnerSessionid
+        - partnerSteamLoginSecure
         - appIds
         - granularity
 

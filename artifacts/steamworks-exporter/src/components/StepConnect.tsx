@@ -9,9 +9,16 @@ import { useTestConnection } from "@workspace/api-client-react";
 import { TutorialPanel } from "./TutorialPanel";
 import { CheckCircle2, Loader2, AlertTriangle, HelpCircle } from "lucide-react";
 
+type Credentials = {
+  sessionid: string;
+  steamLoginSecure: string;
+  partnerSessionid: string;
+  partnerSteamLoginSecure: string;
+};
+
 interface StepConnectProps {
-  credentials: { sessionid: string; steamLoginSecure: string };
-  setCredentials: (creds: { sessionid: string; steamLoginSecure: string }) => void;
+  credentials: Credentials;
+  setCredentials: (creds: Credentials) => void;
   onSuccess: (publisherName: string, gameCount: number) => void;
 }
 
@@ -40,8 +47,13 @@ export function StepConnect({ credentials, setCredentials, onSuccess }: StepConn
   });
 
   const handleTest = () => {
-    if (!credentials.sessionid || !credentials.steamLoginSecure) {
-      setErrorMsg("Both fields are required.");
+    if (
+      !credentials.sessionid ||
+      !credentials.steamLoginSecure ||
+      !credentials.partnerSessionid ||
+      !credentials.partnerSteamLoginSecure
+    ) {
+      setErrorMsg("All four cookie values are required.");
       return;
     }
     setErrorMsg(null);
@@ -59,49 +71,110 @@ export function StepConnect({ credentials, setCredentials, onSuccess }: StepConn
           Provide your session cookies to access your publisher data.
         </CardDescription>
       </CardHeader>
-      <CardContent className="space-y-5">
-        {/* sessionid */}
-        <div className="space-y-2">
+      <CardContent className="space-y-6">
+        {/* Help — Steam scopes cookies per-domain */}
+        <div className="rounded-md border border-border bg-secondary/30 p-3 text-xs text-muted-foreground space-y-1">
+          <p className="font-medium text-foreground">You'll need 4 cookies — 2 from each Steam domain.</p>
+          <p>
+            Steam mints separate session cookies for <span className="font-mono">partner.steamgames.com</span> (used to list your games) and <span className="font-mono">partner.steampowered.com</span> (used to pull stats like wishlists, sales, traffic). Cookies from one domain are not valid on the other.
+          </p>
+          <div className="pt-1">
+            <TutorialPanel>
+              <button className="text-xs text-primary underline underline-offset-2 inline-flex items-center gap-1">
+                <HelpCircle className="h-3 w-3" /> How to find all 4 cookies
+              </button>
+            </TutorialPanel>
+          </div>
+        </div>
+
+        {/* Group A — partner.steamgames.com */}
+        <div className="space-y-3 rounded-md border border-border bg-background/40 p-3">
           <div className="flex items-center justify-between">
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-primary">
+              From <span className="font-mono normal-case text-foreground">partner.steamgames.com</span>
+            </h3>
+          </div>
+
+          <div className="space-y-2">
             <Label htmlFor="sessionid" className="font-mono text-sm text-foreground">
               sessionid
             </Label>
-            <TutorialPanel />
+            <Input
+              id="sessionid"
+              data-testid="input-sessionid"
+              type="password"
+              placeholder="e.g. abc123def456ghi789jkl012"
+              value={credentials.sessionid}
+              onChange={(e) => {
+                setErrorMsg(null);
+                setCredentials({ ...credentials, sessionid: e.target.value.trim() });
+              }}
+              className="font-mono bg-background"
+            />
           </div>
-          <Input
-            id="sessionid"
-            data-testid="input-sessionid"
-            type="password"
-            placeholder="e.g. abc123def456ghi789jkl012"
-            value={credentials.sessionid}
-            onChange={(e) => {
-              setErrorMsg(null);
-              setCredentials({ ...credentials, sessionid: e.target.value.trim() });
-            }}
-            className="font-mono bg-background"
-          />
-        </div>
 
-        {/* steamLoginSecure */}
-        <div className="space-y-2">
-          <div className="flex items-center justify-between">
+          <div className="space-y-2">
             <Label htmlFor="steamLoginSecure" className="font-mono text-sm text-foreground">
               steamLoginSecure
             </Label>
-            <TutorialPanel />
+            <Input
+              id="steamLoginSecure"
+              data-testid="input-steam-login-secure"
+              type="password"
+              placeholder="e.g. 76561198000000000%7C..."
+              value={credentials.steamLoginSecure}
+              onChange={(e) => {
+                setErrorMsg(null);
+                setCredentials({ ...credentials, steamLoginSecure: e.target.value.trim() });
+              }}
+              className="font-mono bg-background"
+            />
           </div>
-          <Input
-            id="steamLoginSecure"
-            data-testid="input-steam-login-secure"
-            type="password"
-            placeholder="e.g. 76561198000000000%7C..."
-            value={credentials.steamLoginSecure}
-            onChange={(e) => {
-              setErrorMsg(null);
-              setCredentials({ ...credentials, steamLoginSecure: e.target.value.trim() });
-            }}
-            className="font-mono bg-background"
-          />
+        </div>
+
+        {/* Group B — partner.steampowered.com */}
+        <div className="space-y-3 rounded-md border border-border bg-background/40 p-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-primary">
+              From <span className="font-mono normal-case text-foreground">partner.steampowered.com</span>
+            </h3>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="partnerSessionid" className="font-mono text-sm text-foreground">
+              sessionid
+            </Label>
+            <Input
+              id="partnerSessionid"
+              data-testid="input-partner-sessionid"
+              type="password"
+              placeholder="e.g. xyz789…"
+              value={credentials.partnerSessionid}
+              onChange={(e) => {
+                setErrorMsg(null);
+                setCredentials({ ...credentials, partnerSessionid: e.target.value.trim() });
+              }}
+              className="font-mono bg-background"
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="partnerSteamLoginSecure" className="font-mono text-sm text-foreground">
+              steamLoginSecure
+            </Label>
+            <Input
+              id="partnerSteamLoginSecure"
+              data-testid="input-partner-steam-login-secure"
+              type="password"
+              placeholder="e.g. 76561198000000000%7C..."
+              value={credentials.partnerSteamLoginSecure}
+              onChange={(e) => {
+                setErrorMsg(null);
+                setCredentials({ ...credentials, partnerSteamLoginSecure: e.target.value.trim() });
+              }}
+              className="font-mono bg-background"
+            />
+          </div>
         </div>
 
         {/* Error state */}
@@ -147,7 +220,9 @@ export function StepConnect({ credentials, setCredentials, onSuccess }: StepConn
             disabled={
               testConn.isPending ||
               !credentials.sessionid ||
-              !credentials.steamLoginSecure
+              !credentials.steamLoginSecure ||
+              !credentials.partnerSessionid ||
+              !credentials.partnerSteamLoginSecure
             }
             variant={isSuccess ? "secondary" : "default"}
           >
