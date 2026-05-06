@@ -6,6 +6,17 @@ import http from "node:http";
 let mainWindow: BrowserWindow | null = null;
 let serverProcess: ChildProcess | null = null;
 let serverPort: number | null = null;
+// Held at module scope so the BrowserWindow + its WebContents are not
+// garbage-collected mid-login. Set when the login flow opens, cleared when
+// the window closes.
+let loginWindow: BrowserWindow | null = null;
+
+const STEAM_LOGIN_PARTITION = "persist:steamworks";
+
+function logSteam(...args: unknown[]) {
+  // eslint-disable-next-line no-console
+  console.log("[steam-login]", ...args);
+}
 
 function resourcesPath(): string {
   const isPackaged = (app as unknown as { isPackaged: boolean }).isPackaged;
@@ -119,7 +130,7 @@ type Credentials = {
 };
 
 async function readSteamCookies(): Promise<Credentials | null> {
-  const loginSession = session.fromPartition("persist:steam-login");
+  const loginSession = session.fromPartition(STEAM_LOGIN_PARTITION);
   const gamesCookies = await loginSession.cookies.get({ domain: "steamgames.com" });
   const poweredCookies = await loginSession.cookies.get({ domain: "steampowered.com" });
   const pick = (cookies: Electron.Cookie[], name: string) =>
@@ -142,60 +153,134 @@ async function readSteamCookies(): Promise<Credentials | null> {
 }
 
 async function clearSteamCookies(): Promise<void> {
-  const loginSession = session.fromPartition("persist:steam-login");
+  const loginSession = session.fromPartition(STEAM_LOGIN_PARTITION);
   await loginSession.clearStorageData({ storages: ["cookies", "localstorage", "indexdb", "websql"] });
 }
 
 // ─── IPC: Steam login ────────────────────────────────────────────────────────
 
 ipcMain.handle("desktop:loginToSteam", async () => {
+  // If a login window is already open (e.g. user double-clicked the button),
+  // focus it instead of opening a second one.
+  if (loginWindow && !loginWindow.isDestroyed()) {
+    loginWindow.focus();
+    return { cancelled: true };
+  }
+
   return new Promise<Credentials | { cancelled: true }>((resolve) => {
+    const loginSession = session.fromPartition(STEAM_LOGIN_PARTITION);
+
     const win = new BrowserWindow({
-      width: 980,
-      height: 760,
+      width: 1000,
+      height: 800,
+      minWidth: 720,
+      minHeight: 560,
       title: "Sign in to Steamworks",
       backgroundColor: "#1b2838",
-      modal: true,
-      parent: mainWindow ?? undefined,
+      // Note: not modal. Modal-on-Windows can cause the parent's focus
+      // changes to interact badly with popup blockers; standalone window
+      // behaves identically across platforms.
+      autoHideMenuBar: true,
       webPreferences: {
         contextIsolation: true,
         nodeIntegration: false,
-        partition: "persist:steam-login",
+        partition: STEAM_LOGIN_PARTITION,
       },
     });
 
+    loginWindow = win;
+
     let settled = false;
-    const finishWith = async () => {
-      if (settled) return;
+    let finishing = false;
+
+    const tryComplete = async (reason: string) => {
+      if (settled || finishing) return;
+      const creds = await readSteamCookies();
+      if (!creds) return;
+      finishing = true;
+      logSteam("complete:", reason, "— required cookies present, closing window");
       settled = true;
+      cleanup();
+      resolve(creds);
+      if (!win.isDestroyed()) win.close();
+    };
+
+    const onCookieChanged = (
+      _event: Electron.Event,
+      cookie: Electron.Cookie,
+      _cause: string,
+      removed: boolean
+    ) => {
+      if (removed) return;
+      // Only react to the cookies we actually care about — avoids firing
+      // tryComplete on every analytics/tracking cookie Steam sets.
+      const interesting =
+        (cookie.name === "sessionid" || cookie.name === "steamLoginSecure") &&
+        (cookie.domain?.includes("steamgames.com") || cookie.domain?.includes("steampowered.com"));
+      if (!interesting) return;
+      logSteam("cookie set:", cookie.name, cookie.domain);
+      void tryComplete(`cookie:${cookie.name}@${cookie.domain}`);
+    };
+
+    // Belt-and-braces poll. Some cookie writes happen via `Set-Cookie` on
+    // navigations that the cookies-changed event coverage has occasionally
+    // missed in the wild. Cheap to run.
+    const pollHandle = setInterval(() => void tryComplete("poll"), 1500);
+
+    const cleanup = () => {
+      clearInterval(pollHandle);
       try {
-        const creds = await readSteamCookies();
-        resolve(creds ?? { cancelled: true });
+        loginSession.cookies.removeListener("changed", onCookieChanged);
       } catch {
-        resolve({ cancelled: true });
-      } finally {
-        if (!win.isDestroyed()) win.close();
+        // ignore
       }
     };
 
+    loginSession.cookies.on("changed", onCookieChanged);
+
+    // ── Logging: surface every navigation in the login window so packaged
+    //    builds are diagnosable without a remote debugger.
+    win.webContents.on("did-start-navigation", (_e, url, _isInPlace, isMainFrame) => {
+      if (isMainFrame) logSteam("did-start-navigation →", url);
+    });
     win.webContents.on("did-navigate", (_e, url) => {
-      if (
-        (url.includes("partner.steamgames.com") || url.includes("partner.steampowered.com")) &&
-        !url.includes("/login") &&
-        !url.includes("login.steampowered.com")
-      ) {
-        setTimeout(finishWith, 800);
-      }
+      logSteam("did-navigate →", url);
+      void tryComplete("did-navigate");
+    });
+    win.webContents.on("did-navigate-in-page", (_e, url, isMainFrame) => {
+      if (isMainFrame) logSteam("did-navigate-in-page →", url);
+    });
+    win.webContents.on("did-redirect-navigation", (_e, url) => {
+      logSteam("did-redirect-navigation →", url);
+    });
+    win.webContents.on("did-fail-load", (_e, code, desc, url, isMainFrame) => {
+      if (!isMainFrame) return;
+      // -3 (ABORTED) is normal when a navigation is superseded by a redirect.
+      if (code === -3) return;
+      logSteam("did-fail-load", { code, desc, url });
+    });
+
+    // Steam Guard 2FA, "Sign in with QR code", and OpenID flows occasionally
+    // try to spawn popups. Keep them inside the same window so cookies stay
+    // in the persistent partition and the user never loses context.
+    win.webContents.setWindowOpenHandler(({ url }) => {
+      logSteam("popup requested →", url, "(opening in same window)");
+      void win.loadURL(url);
+      return { action: "deny" };
     });
 
     win.on("closed", () => {
+      cleanup();
+      loginWindow = null;
       if (!settled) {
+        logSteam("window closed by user before cookies were captured");
         settled = true;
         resolve({ cancelled: true });
       }
     });
 
-    win.loadURL("https://partner.steamgames.com/home");
+    logSteam("opening login window → https://partner.steamgames.com/home");
+    void win.loadURL("https://partner.steamgames.com/home");
   });
 });
 
