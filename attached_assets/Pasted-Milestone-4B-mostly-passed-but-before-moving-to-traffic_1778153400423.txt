@@ -1,0 +1,71 @@
+Milestone 4B mostly passed, but before moving to traffic, fix these cleanup issues in the Current Pull Only workbook.
+
+Do not build UI.
+Do not build Electron.
+Do not scrape dashboard.
+Do not add Ask Tracker.
+Do not modify the original tracker.
+Do not reconnect traffic yet.
+
+Fix only the standalone Pull Data Alone wishlist workbook.
+
+Issues found in the exported file:
+
+1. Visible game naming
+Some visible workbook labels still show "Fleet Breakers" with a space.
+The sheet name is correctly "Fleetbreakers", but visible labels in Summary, Validation, Pull Log, Raw_Wishlist_API, and game sheets should consistently use:
+
+Fleetbreakers
+
+Keep "Fleet Breakers" only as an internal alias if needed.
+
+2. Validation failed-pulls summary
+Validation currently says:
+Games with failed pulls: (none)
+
+But Fleetbreakers had 2 failed API/date pulls:
+2026-05-05 EMPTY_RESPONSE
+2026-05-06 EMPTY_RESPONSE
+
+Fix Validation so it clearly shows:
+Games with failed pulls: Fleetbreakers, partial failure, 2 dates
+
+The workbook can still PASS because other data was pulled successfully, but the partial failure must be visible.
+
+3. Top country / top language summary
+The Summary sheet currently shows unreliable values like:
+Australia (adds=0)
+0 (adds=0)
+
+Do not show fake or misleading top country/top language.
+
+If the country/language summary cannot calculate a real top value from the Steam payload, show:
+NOT AVAILABLE
+
+If it can calculate a real top country/language based on wishlist adds, show the correct country/language and adds count.
+
+Do not coerce missing country/language values to 0.
+
+4. Fleetbreakers failed dates
+Keep 2026-05-05 and 2026-05-06 as:
+EMPTY_RESPONSE
+
+Do not convert them to 0.
+Do not mark them as successful.
+
+5. Final verification
+After fixing, rerun:
+
+pnpm --filter @workspace/scripts run tracker:current-pull:wishlist:all-games
+
+Report:
+1. New output workbook path
+2. Whether cache was reused or Steam was re-pulled
+3. Whether all visible "Fleet Breakers" labels were changed to "Fleetbreakers"
+4. Whether Validation now shows Fleetbreakers partial failure
+5. Whether top country/top language are either real values or NOT AVAILABLE
+6. Whether there are zero #VALUE cells
+7. Whether there are zero [object Object] cells
+8. Whether old tracker history is still excluded
+9. Whether Raw_Traffic still says NOT PULLED
+10. Final Validation status

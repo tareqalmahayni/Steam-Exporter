@@ -107,6 +107,17 @@ const STANDALONE_SHEET_NAMES: Record<GameId, string> = {
   petunia: "Petunia's Purgatory",
 };
 
+/**
+ * Visible display name used in every rendered cell of the standalone
+ * workbook. Same as the sheet names — this is the user-facing brand spelling
+ * (e.g. "Fleetbreakers", not "Fleet Breakers"). The internal
+ * `map.canonicalName` is kept untouched as an alias for logs and the M4
+ * tracker workbook.
+ */
+function displayNameOf(id: GameId): string {
+  return STANDALONE_SHEET_NAMES[id];
+}
+
 function findReusableCache(rootDir: string, window: { startIso: string; endIso: string }): { path: string; cache: CacheFile } | null {
   const runsDir = path.join(rootDir, ".local", "tracker-runs");
   if (!fs.existsSync(runsDir)) return null;
@@ -239,26 +250,30 @@ function deriveOverallStatus(s: WishlistPullSummary): WishlistDayStatus {
   return firstFail?.status ?? "API_ERROR";
 }
 
-function topByVolume(rows: DerivedBreakdownRow[], metricLabel: "net" | "adds"): string {
-  if (rows.length === 0) return "n/a";
-  // Aggregate adds + net per key. Steam often returns only adds at the
-  // country/language level (no deletes/purchases/gifts), so net is null →
-  // ranking-by-adds is the meaningful fallback.
-  const totals = new Map<string, { label: string; adds: number; netSum: number; netHasValue: boolean }>();
+function topByVolume(rows: DerivedBreakdownRow[], _metricLabel: "net" | "adds"): string {
+  // Steam's per-day country/language summaries often arrive with the key
+  // present but with no real adds/deletes/purchases/gifts numbers we can
+  // attribute. In that case we MUST NOT invent a winner with "(adds=0)" —
+  // the spec requires the literal "NOT AVAILABLE".
+  if (rows.length === 0) return "NOT AVAILABLE";
+  const totals = new Map<string, { label: string; adds: number; addsHasValue: boolean; netSum: number; netHasValue: boolean }>();
   for (const r of rows) {
-    const cur = totals.get(r.key) ?? { label: r.label || r.key, adds: 0, netSum: 0, netHasValue: false };
-    cur.adds += r.adds ?? 0;
+    const cur = totals.get(r.key) ?? { label: r.label || r.key, adds: 0, addsHasValue: false, netSum: 0, netHasValue: false };
+    if (r.adds !== null) { cur.adds += r.adds; cur.addsHasValue = true; }
     if (r.net !== null) { cur.netSum += r.net; cur.netHasValue = true; }
     totals.set(r.key, cur);
   }
-  // Prefer net if any row had a real net; otherwise rank by adds.
   const anyNet = Array.from(totals.values()).some((v) => v.netHasValue);
+  const anyAdds = Array.from(totals.values()).some((v) => v.addsHasValue && v.adds > 0);
+  if (!anyNet && !anyAdds) return "NOT AVAILABLE";
   let best: { label: string; metric: number; metricName: string } | null = null;
   for (const v of totals.values()) {
     const metric = anyNet ? v.netSum : v.adds;
     if (!best || metric > best.metric) best = { label: v.label, metric, metricName: anyNet ? "net" : "adds" };
   }
-  return best ? `${best.label} (${best.metricName}=${best.metric})` : "n/a";
+  // Even with non-empty totals, all metric values may be 0 — still meaningless.
+  if (!best || best.metric <= 0) return "NOT AVAILABLE";
+  return `${best.label} (${best.metricName}=${best.metric})`;
 }
 
 async function pullFresh(window: { startIso: string; endIso: string }, apiKey: string | undefined): Promise<CachedGame[]> {
@@ -292,7 +307,7 @@ function writeSummarySheet(wb: Workbook, perGame: PerGame[], window: { startIso:
     const g = perGame[i];
     const r = ws.getRow(i + 2);
     r.values = [
-      g.map.canonicalName, g.appid, `${window.startIso} → ${window.endIso}`,
+      displayNameOf(g.map.id), g.appid, `${window.startIso} → ${window.endIso}`,
       g.totals.adds, g.totals.deletes, g.totals.purchases, g.totals.gifts, g.totals.net,
       topByVolume(g.countryRows, "net"), topByVolume(g.languageRows, "net"),
       g.overallStatus,
@@ -319,9 +334,27 @@ function writeValidationSheet(wb: Workbook, perGame: PerGame[], window: { startI
   const totalsAttempted = perGame.reduce((s, g) => s + g.summary.attempted, 0);
   const totalsSucceeded = perGame.reduce((s, g) => s + g.summary.succeeded, 0);
   const totalsFailed = perGame.reduce((s, g) => s + g.summary.failed, 0);
-  const realDataGames = perGame.filter((g) => g.overallStatus === "REAL_DATA").map((g) => g.map.canonicalName);
-  const trueZeroGames = perGame.filter((g) => g.overallStatus === "TRUE_ZERO_FROM_STEAM").map((g) => g.map.canonicalName);
-  const failedGames = perGame.filter((g) => g.overallStatus !== "REAL_DATA" && g.overallStatus !== "TRUE_ZERO_FROM_STEAM").map((g) => `${g.map.canonicalName} [${g.overallStatus}]`);
+  const realDataGames = perGame.filter((g) => g.overallStatus === "REAL_DATA").map((g) => displayNameOf(g.map.id));
+  const trueZeroGames = perGame.filter((g) => g.overallStatus === "TRUE_ZERO_FROM_STEAM").map((g) => displayNameOf(g.map.id));
+  // Fully-failed games (every day failed).
+  const fullyFailedGames = perGame
+    .filter((g) => g.overallStatus !== "REAL_DATA" && g.overallStatus !== "TRUE_ZERO_FROM_STEAM")
+    .map((g) => `${displayNameOf(g.map.id)} [${g.overallStatus}]`);
+  // Partially-failed games: overall succeeded, but ≥1 day failed (e.g. EMPTY_RESPONSE).
+  // The spec requires this to be visible in Validation even though the run still PASSES.
+  const partialFailures = perGame
+    .filter((g) => (g.overallStatus === "REAL_DATA" || g.overallStatus === "TRUE_ZERO_FROM_STEAM"))
+    .map((g) => {
+      const failedDays = g.summary.daily.filter((d) => d.status !== "REAL_DATA" && d.status !== "TRUE_ZERO_FROM_STEAM");
+      return failedDays.length === 0 ? null : `${displayNameOf(g.map.id)}, partial failure, ${failedDays.length} ${failedDays.length === 1 ? "date" : "dates"}`;
+    })
+    .filter((s): s is string => s !== null);
+  const failedPullsField = (() => {
+    const parts: string[] = [];
+    if (fullyFailedGames.length > 0) parts.push(...fullyFailedGames);
+    if (partialFailures.length > 0) parts.push(...partialFailures);
+    return parts.length === 0 ? "(none)" : parts.join("; ");
+  })();
 
   // PASSED iff every game returned at least some real or true-zero days. A
   // game with partial daily failures (like Fleetbreakers) still counts as
@@ -334,7 +367,7 @@ function writeValidationSheet(wb: Workbook, perGame: PerGame[], window: { startI
     ["Pull timestamp", new Date().toISOString()],
     ["Data source", source === "cache-reuse" ? "Reused cache from prior M4 run (no Steam call)" : "Fresh pull from Steam Partner Financial API"],
     ["STEAM_FINANCIAL_KEY present", keyPresent ? "YES" : "NO"],
-    ["Selected games", perGame.map((g) => g.map.canonicalName).join(", ")],
+    ["Selected games", perGame.map((g) => displayNameOf(g.map.id)).join(", ")],
     ["Selected date range", window.label],
     ["Range start", window.startIso],
     ["Range end", window.endIso],
@@ -343,7 +376,7 @@ function writeValidationSheet(wb: Workbook, perGame: PerGame[], window: { startI
     ["API calls failed (total)", totalsFailed],
     ["Games with real data", realDataGames.length === 0 ? "(none)" : realDataGames.join(", ")],
     ["Games with true-zero values", trueZeroGames.length === 0 ? "(none)" : trueZeroGames.join(", ")],
-    ["Games with failed pulls", failedGames.length === 0 ? "(none)" : failedGames.join(", ")],
+    ["Games with failed pulls", failedPullsField],
     ["Final status", finalStatus],
   ];
   for (let i = 0; i < rows.length; i++) ws.getRow(i + 2).values = rows[i];
@@ -362,7 +395,7 @@ function writePullLogSheet(wb: Workbook, perGame: PerGame[]): void {
     for (const d of g.summary.daily) {
       const r = ws.getRow(ws.rowCount + 1);
       r.values = [
-        stamp, g.map.canonicalName, g.appid, d.dateIso, d.httpStatus ?? "", d.status,
+        stamp, displayNameOf(g.map.id), g.appid, d.dateIso, d.httpStatus ?? "", d.status,
         d.adds ?? "", d.deletes ?? "", d.purchases ?? "", d.gifts ?? "", d.net ?? "",
         "Steam Partner Financial API", d.message,
       ];
@@ -391,7 +424,7 @@ function writeRawWishlistApiSheet(wb: Workbook, perGame: PerGame[]): void {
     for (const d of g.summary.daily) {
       const r = ws.getRow(ws.rowCount + 1);
       r.values = [
-        d.dateIso, g.map.canonicalName, g.appid,
+        d.dateIso, displayNameOf(g.map.id), g.appid,
         d.adds ?? "n/a", d.deletes ?? "n/a", d.purchases ?? "n/a", d.gifts ?? "n/a",
         d.addsWindows ?? "n/a", d.addsMac ?? "n/a", d.addsLinux ?? "n/a", d.net ?? "n/a",
         d.countrySummaryPresent ? "YES" : "NO", d.languageSummaryPresent ? "YES" : "NO",
@@ -429,7 +462,7 @@ function writeGameSheet(wb: Workbook, g: PerGame, sheetName: string, window: { s
   ws.getCell(`A${r}`).font = { bold: true };
   r++;
   const overview: Array<[string, string | number]> = [
-    ["Game", g.map.canonicalName],
+    ["Game", displayNameOf(g.map.id)],
     ["AppID", g.appid],
     ["Date range", `${window.startIso} → ${window.endIso}`],
     ["Pull timestamp", pullTimestamp],
@@ -655,7 +688,7 @@ async function main(): Promise<void> {
   console.log(`3. Date range pulled:               ${window.startIso} → ${window.endIso} (7 days)`);
   console.log(`4. Daily values per game:`);
   for (const g of perGame) {
-    console.log(`   --- ${g.map.canonicalName} (appid ${g.appid}) — ${g.overallStatus}`);
+    console.log(`   --- ${displayNameOf(g.map.id)} (appid ${g.appid}) — ${g.overallStatus}`);
     for (const d of g.summary.daily) {
       if (d.status === "REAL_DATA" || d.status === "TRUE_ZERO_FROM_STEAM") {
         console.log(`     ${d.dateIso}  adds=${d.adds}  del=${d.deletes}  pur=${d.purchases}  gifts=${d.gifts}  net=${d.net}`);
@@ -666,7 +699,7 @@ async function main(): Promise<void> {
   }
   console.log(`5. Weekly totals per game:`);
   for (const g of perGame) {
-    console.log(`   ${g.map.canonicalName.padEnd(28)} adds=${g.totals.adds} del=${g.totals.deletes} pur=${g.totals.purchases} gifts=${g.totals.gifts} NET=${g.totals.net}  [${g.overallStatus}]`);
+    console.log(`   ${displayNameOf(g.map.id).padEnd(28)} adds=${g.totals.adds} del=${g.totals.deletes} pur=${g.totals.purchases} gifts=${g.totals.gifts} NET=${g.totals.net}  [${g.overallStatus}]`);
   }
   console.log(`6. API calls attempted:             ${totalsAttempted}`);
   console.log(`7. API calls successful:            ${totalsSucceeded}`);
@@ -675,7 +708,7 @@ async function main(): Promise<void> {
   console.log(`10. Pulled-data-only (no tracker):  YES — built from scratch with ExcelJS; no template was opened`);
   console.log(`11. Fleetbreakers EMPTY_RESPONSE dates: ${fleetEmptyDates.length === 0 ? "(none)" : fleetEmptyDates.join(", ")}  ${fleetEmptyDates.length > 0 ? "→ shown as EMPTY_RESPONSE in workbook (no fake 0)" : ""}`);
   console.log(`12. [object Object] cells:          ${objectObjectCells.length === 0 ? "0 (clean)" : `${objectObjectCells.length} found at: ${objectObjectCells.join(", ")}`}`);
-  const allFails = perGame.flatMap((g) => g.errors.map((m) => `${g.map.canonicalName} ERR ${m}`).concat(g.warnings.map((m) => `${g.map.canonicalName} WARN ${m}`)));
+  const allFails = perGame.flatMap((g) => g.errors.map((m) => `${displayNameOf(g.map.id)} ERR ${m}`).concat(g.warnings.map((m) => `${displayNameOf(g.map.id)} WARN ${m}`)));
   console.log(`13. Errors / warnings:              ${allFails.length === 0 ? "none" : `${allFails.length}:`}`);
   for (const f of allFails) console.log(`    ${f}`);
   console.log(`\nFINAL: ${finalStatus}`);
