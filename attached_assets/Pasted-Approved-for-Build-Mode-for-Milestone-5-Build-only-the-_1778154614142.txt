@@ -1,0 +1,183 @@
+Approved for Build Mode for Milestone 5.
+
+Build only the Traffic CSV import parser and clean Excel output using the inspected Colossus traffic CSV first.
+
+Do not build UI yet.
+Do not build Electron yet.
+Do not scrape Steamworks dashboard yet.
+Do not add Ask Tracker yet.
+Do not modify the original tracker.
+Do not connect wishlist again in this milestone.
+
+Input file:
+.local/input/traffic/traffic_colossus_1722800_20260430_20260506.csv
+
+Confirmed CSV mapping:
+
+Headers:
+Page / Category
+Page / Feature
+Impressions
+Visits
+Owner Impressions
+Owner Visits
+
+Important parsing rules:
+1. Strip UTF-8 BOM from the first header.
+2. Use a real CSV parser, not split(","), because quoted values may contain commas.
+3. AppID must be read from filename.
+4. Date range must be read from filename.
+5. Validate filename pattern:
+   traffic_<game>_<appid>_<startYYYYMMDD>_<endYYYYMMDD>.csv
+6. Validate AppID against allowlist:
+   Colossus - Eternal Blight: 1722800
+   Fleetbreakers: 2929040
+   Taival: 3152750
+   Noor: 3728760
+   Petunia's Purgatory: 4009450
+7. If filename AppID is not in allowlist, fail clearly.
+8. If date range in filename does not match run window, warn or reject.
+9. No date column exists in the CSV, so label this data as window-aggregate, not daily.
+10. Do not fake daily traffic data.
+
+Metric mapping:
+- Impressions = public impressions
+- Visits = public visits
+- Owner Impressions = developer/self impressions
+- Owner Visits = developer/self visits
+- CTR = Visits / Impressions, only if impressions exists and is greater than 0
+
+Important semantic rules:
+1. Page / Category = source category.
+2. Page / Feature = source/page feature.
+3. If Page / Category == "Country", treat Page / Feature as country_code.
+4. Country rows must go into a separate Country Breakdown section.
+5. Country rows must not be double-counted into Page/Source totals.
+6. Bot Traffic should be kept and flagged with is_bot=true.
+7. Owner Impressions and Owner Visits must be kept separate from public impressions and visits.
+8. Blank Page / Feature should be rendered as "(unknown)".
+9. "(Other)" is a real Steam bucket and must be kept verbatim.
+10. Do not drop rows unless they are invalid, and log invalid rows.
+
+Create or update:
+
+scripts/src/traffic/trafficCsv.ts
+scripts/src/traffic/trafficCurrentPullCli.ts
+
+Functions:
+- parseTrafficCsv(filePath)
+- normalizeTrafficRows(rows)
+- detectTrafficCsvFormat(headers)
+- parseTrafficFilename(fileName)
+- validateTrafficFileIdentity(fileName, appAllowlist)
+- splitTrafficRowsIntoPageSourceAndCountry(rows)
+- aggregateTrafficByGameAndWindow(rows)
+- aggregateTrafficBySourcePage(rows)
+- aggregateTrafficByCountry(rows)
+- calculateCtr(visits, impressions)
+- validateTrafficRows(rows)
+
+Add CLI command:
+
+pnpm --filter @workspace/scripts run tracker:current-pull:traffic-csv
+
+For this milestone, default input should be:
+.local/input/traffic/traffic_colossus_1722800_20260430_20260506.csv
+
+Output:
+Steamworks_Current_Pull_Traffic_Colossus_2026-05-07.xlsx
+
+Workbook sheets:
+
+1. Summary
+2. Validation
+3. Pull Log
+4. Raw_Traffic
+5. Colossus - Eternal Blight
+
+Colossus sheet sections:
+
+Section A: Overview
+- Game
+- AppID
+- Date range
+- Granularity: Window Aggregate
+- Total public impressions
+- Total public visits
+- CTR
+- Total owner impressions
+- Total owner visits
+- Bot impressions
+- Bot visits
+- Status
+- Errors
+- Warnings
+
+Section B: Page/Source Breakdown
+- Source Category
+- Source/Page Feature
+- Impressions
+- Visits
+- CTR
+- Owner Impressions
+- Owner Visits
+- Is Bot
+- Status
+- Message
+
+Section C: Country Breakdown
+- Country Code
+- Impressions
+- Visits
+- CTR
+- Owner Impressions
+- Owner Visits
+- Status
+- Message
+
+Validation sheet must show:
+- CSV file used
+- Headers detected
+- Filename AppID
+- Filename date range
+- Rows parsed
+- Page/source rows parsed
+- Country rows parsed
+- Invalid rows
+- Public impressions total
+- Public visits total
+- CTR calculation method
+- Owner impressions total
+- Owner visits total
+- Bot traffic totals
+- Warnings
+- Errors
+- Final status: PASSED or FAILED
+
+Important:
+- Do not write fake 0s.
+- 0 is allowed only if CSV explicitly contains 0.
+- Missing values should be NOT AVAILABLE.
+- Failed parse should not look successful.
+- Do not include wishlist data in this workbook.
+- Do not include old tracker history.
+- Do not include Dashboard, Consolidated KPI, or KPI by Quarter.
+- The Excel file must only contain traffic data from this CSV.
+
+After building, run the command and report:
+
+1. Output workbook path
+2. Rows parsed
+3. Page/source rows parsed
+4. Country rows parsed
+5. Invalid rows
+6. Total public impressions
+7. Total public visits
+8. CTR
+9. Total owner impressions
+10. Total owner visits
+11. Bot traffic totals
+12. Whether country rows were separated and not double-counted
+13. Whether workbook contains only traffic CSV data
+14. Whether Validation says PASSED or FAILED
+15. Any warnings or errors

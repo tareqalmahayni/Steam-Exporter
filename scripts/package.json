@@ -10,6 +10,7 @@
     "tracker:real-wishlist:colossus": "tsx ./src/tracker/realCli.ts",
     "tracker:real-wishlist:all-games": "tsx ./src/tracker/realCliAllGames.ts",
     "tracker:current-pull:wishlist:all-games": "tsx ./src/tracker/realCliCurrentPullAllGames.ts",
+    "tracker:current-pull:traffic-csv": "tsx ./src/traffic/trafficCurrentPullCli.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {
