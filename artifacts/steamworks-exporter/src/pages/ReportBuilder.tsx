@@ -53,10 +53,11 @@ interface GenerateResponse {
 }
 
 type DataType = "wishlist" | "traffic" | "both";
-type DateMode = "today" | "previousMonth" | "previousYear" | "lifetime" | "preference";
+type DateMode = "today" | "previousWeek" | "previousMonth" | "previousYear" | "lifetime" | "preference";
 
 const DATE_MODE_LABEL: Record<DateMode, string> = {
   today: "Today",
+  previousWeek: "Previous Week (rolling 7 days)",
   previousMonth: "Previous Month (rolling 30 days)",
   previousYear: "Previous Year (rolling 365 days)",
   lifetime: "Lifetime",
@@ -144,6 +145,9 @@ export function ReportBuilder() {
   const { computedStart, computedEnd, dateModeBlocker } = useMemo(() => {
     if (dateMode === "today") {
       return { computedStart: todayIso, computedEnd: todayIso, dateModeBlocker: null as string | null };
+    }
+    if (dateMode === "previousWeek") {
+      return { computedStart: isoNDaysAgo(6), computedEnd: todayIso, dateModeBlocker: null };
     }
     if (dateMode === "previousMonth") {
       return { computedStart: isoNDaysAgo(29), computedEnd: todayIso, dateModeBlocker: null };
