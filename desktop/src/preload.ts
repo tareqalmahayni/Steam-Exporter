@@ -25,6 +25,17 @@ const api = {
     creds: Credentials
   ): Promise<{ ok: boolean; credentials?: Credentials; error?: string }> =>
     ipcRenderer.invoke("desktop:saveSteamCookies", creds),
+  // M7 main flow: pull the traffic breakdown for one game using the persisted
+  // Steamworks session held in the Electron main process. Cookies never cross
+  // the IPC boundary into the renderer.
+  pullSteamworksTraffic: (
+    appid: string,
+    startIso: string,
+    endIso: string
+  ): Promise<
+    | { ok: true; fileName: string; text: string; rowCount: number }
+    | { ok: false; status: string; error: string }
+  > => ipcRenderer.invoke("desktop:pullSteamworksTraffic", appid, startIso, endIso),
 };
 
 contextBridge.exposeInMainWorld("desktop", api);

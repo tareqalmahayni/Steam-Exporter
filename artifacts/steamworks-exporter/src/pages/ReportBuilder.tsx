@@ -264,12 +264,47 @@ export function ReportBuilder() {
     append("GENERATING_EXCEL — building workbook...");
 
     try {
+      // Steamworks main flow: pre-pull each selected game's traffic via the
+      // Electron IPC so the rest of the pipeline gets real numbers (not
+      // STEAMWORKS_LOGIN_REQUIRED placeholders). Per-game failures are
+      // forwarded as `steamworksPullErrors` so processGame can surface the
+      // exact status token (TRAFFIC_PAGE_ACCESS_DENIED / TRAFFIC_DOWNLOAD_FAILED).
+      const liveTrafficCsvs: Record<string, { fileName: string; text: string }> = {};
+      const steamworksPullErrors: Record<string, { status: string; error: string }> = {};
+      if (trafficRequested && trafficSource === "steamworks" && window.desktop?.pullSteamworksTraffic) {
+        append(`PULLING_TRAFFIC_FROM_STEAMWORKS — ${selectedAppIds.size} game${selectedAppIds.size === 1 ? "" : "s"}, window=${startIso} → ${endIso}`);
+        for (const appid of selectedAppIds) {
+          const g = games.find((x) => x.appid === appid);
+          const label = g?.displayName ?? appid;
+          try {
+            const r = await window.desktop.pullSteamworksTraffic(appid, startIso, endIso);
+            if (r.ok) {
+              liveTrafficCsvs[appid] = { fileName: r.fileName, text: r.text };
+              append(`[${label}] PULLED_TRAFFIC — ${r.rowCount} rows.`);
+            } else {
+              steamworksPullErrors[appid] = { status: r.status, error: r.error };
+              append(`[${label}] ${r.status} — ${r.error}`);
+            }
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            steamworksPullErrors[appid] = { status: "TRAFFIC_DOWNLOAD_FAILED", error: msg };
+            append(`[${label}] TRAFFIC_DOWNLOAD_FAILED — ${msg}`);
+          }
+        }
+      }
+      const csvsForBody =
+        trafficRequested
+          ? trafficSource === "csv"
+            ? trafficCsvs
+            : liveTrafficCsvs
+          : {};
       const body = {
         selectedAppIds: Array.from(selectedAppIds),
         dataType,
         window: { startIso, endIso },
-        trafficCsvs: trafficRequested && trafficSource === "csv" ? trafficCsvs : {},
+        trafficCsvs: csvsForBody,
         trafficSource,
+        steamworksPullErrors,
       };
       const res = await fetch(API("/combined/generate"), {
         method: "POST",

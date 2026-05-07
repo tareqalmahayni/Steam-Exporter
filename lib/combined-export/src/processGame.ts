@@ -191,6 +191,15 @@ export interface ProcessGameInput {
    *   STEAMWORKS_LOGIN_REQUIRED instead of complaining about a missing CSV.
    */
   trafficSource?: "csv" | "steamworks";
+  /**
+   * Override the rolled-up traffic status (used by the route layer when the
+   * Steamworks pre-pull failed for this game with a specific status token
+   * such as TRAFFIC_PAGE_ACCESS_DENIED or TRAFFIC_DOWNLOAD_FAILED). Only
+   * consulted when no `trafficCsv` is provided.
+   */
+  trafficStatusOverride?: TrafficRollupStatus;
+  /** Human-readable error to attach when `trafficStatusOverride` is set. */
+  trafficErrorOverride?: string;
 }
 
 export function processGame(input: ProcessGameInput): PerGame {
@@ -253,7 +262,10 @@ export function processGame(input: ProcessGameInput): PerGame {
   if (!trafficRequested) {
     trafficStatus = "TRAFFIC_NOT_REQUESTED";
   } else if (!trafficCsv) {
-    if (trafficSource === "steamworks") {
+    if (input.trafficStatusOverride) {
+      trafficStatus = input.trafficStatusOverride;
+      errors.push(input.trafficErrorOverride ?? `${input.trafficStatusOverride} — ${spec.displayName}`);
+    } else if (trafficSource === "steamworks") {
       // Main flow: traffic should have come from the authenticated Steamworks
       // session. The absence of data here means the desktop session was not
       // available (or the auto-pull plumbing is not yet wired in this build).

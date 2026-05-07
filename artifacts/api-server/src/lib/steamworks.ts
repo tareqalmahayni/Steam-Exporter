@@ -1184,6 +1184,191 @@ async function getTrafficStats(
   return parsed;
 }
 
+/**
+ * M7 — Pull the Store & Steam Platform Traffic Breakdown for one game and
+ * return it as a canonical Page/Category CSV (the same shape the manual CSV
+ * upload path produces). Used by the Electron "Pull Traffic from Steamworks"
+ * flow so the rest of the pipeline (parser → processGame → workbook) needs
+ * zero changes downstream.
+ *
+ * Returns either:
+ *   { ok: true, csvText, fileName, rowCount }
+ *   { ok: false, status: TrafficPullStatus, error }
+ *
+ * Status tokens align with the renderer / processGame contract:
+ *   STEAMWORKS_LOGIN_REQUIRED  — no usable session for partner.steampowered.com
+ *   TRAFFIC_PAGE_ACCESS_DENIED — page returned but with no parseable content
+ *   TRAFFIC_DOWNLOAD_FAILED    — fetched, but no breakdown table extractable
+ */
+export type TrafficPullStatus =
+  | "STEAMWORKS_LOGIN_REQUIRED"
+  | "TRAFFIC_PAGE_ACCESS_DENIED"
+  | "TRAFFIC_DOWNLOAD_FAILED";
+
+const TRAFFIC_CSV_HEADERS = [
+  "Page / Category",
+  "Page / Feature",
+  "Impressions",
+  "Visits",
+  "Owner Impressions",
+  "Owner Visits",
+] as const;
+
+function csvCell(s: string): string {
+  if (s == null) return "";
+  const needsQuote = /[",\n\r]/.test(s);
+  return needsQuote ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+function csvIntCell(n: number | null): string {
+  return n === null ? "" : String(n);
+}
+
+function parseLooseInt(raw: string | undefined): number | null {
+  if (raw == null) return null;
+  const t = raw.trim().replace(/,/g, "");
+  if (t === "" || t === "-" || /^n\/a$/i.test(t)) return null;
+  const n = Number(t);
+  if (!Number.isFinite(n)) return null;
+  return Math.trunc(n);
+}
+
+/** Resolve a header label into one of the canonical CSV column keys (or null). */
+function classifyTrafficHeader(header: string): keyof typeof TRAFFIC_HEADER_BUCKETS | null {
+  const norm = header.toLowerCase().replace(/[^a-z0-9]/g, "");
+  if (/category/.test(norm)) return "category";
+  if (/feature|source|referrer|^from$|channel/.test(norm)) return "feature";
+  if (/^country$|countrycode/.test(norm)) return "country";
+  if (/ownerimpression/.test(norm)) return "ownerImpressions";
+  if (/ownervisit|ownerview/.test(norm)) return "ownerVisits";
+  if (/impression/.test(norm)) return "impressions";
+  if (/^visits?$|pageview|pagevisit/.test(norm)) return "visits";
+  return null;
+}
+
+const TRAFFIC_HEADER_BUCKETS = {
+  category: 0,
+  feature: 0,
+  country: 0,
+  impressions: 0,
+  visits: 0,
+  ownerImpressions: 0,
+  ownerVisits: 0,
+} as const;
+
+export async function pullSteamworksTrafficCsv(
+  appId: number,
+  startIso: string,
+  endIso: string,
+  trafficFileToken: string,
+  sessionid: string,
+  steamLoginSecure: string,
+  partnerSessionid?: string,
+  partnerSteamLoginSecure?: string
+): Promise<
+  | { ok: true; csvText: string; fileName: string; rowCount: number }
+  | { ok: false; status: TrafficPullStatus; error: string }
+> {
+  const stripDashes = (iso: string) => iso.replace(/-/g, "");
+  const fileName = `traffic_${trafficFileToken}_${appId}_${stripDashes(startIso)}_${stripDashes(endIso)}.csv`;
+
+  // Best-effort: pass dateStart / dateEnd as query params. Steamworks accepts
+  // these on the navtrafficstats page; if the server ignores them the page
+  // defaults to its own preset and we'll surface that as a known limitation.
+  const url = `${BASE}/apps/navtrafficstats/${appId}?dateStart=${startIso}&dateEnd=${endIso}&preset_date_range=custom`;
+
+  let html: string;
+  try {
+    html = await fetchPartnerHtml("navtrafficstats:csv-pull", url, sessionid, steamLoginSecure, partnerSessionid, partnerSteamLoginSecure);
+  } catch (e) {
+    const msg = (e as Error).message;
+    if (msg === "session_expired") {
+      return { ok: false, status: "STEAMWORKS_LOGIN_REQUIRED", error: "Steamworks session expired or not detected — please sign in again in the desktop window." };
+    }
+    return { ok: false, status: "TRAFFIC_DOWNLOAD_FAILED", error: `Network error fetching navtrafficstats: ${msg}` };
+  }
+
+  if (!html || html.trim().length === 0) {
+    return { ok: false, status: "TRAFFIC_PAGE_ACCESS_DENIED", error: `Empty response from ${url} — the partner page is inaccessible (auth gap or 4xx).` };
+  }
+
+  let parsed: ReturnType<typeof extractTablesAndStats>;
+  try {
+    parsed = extractTablesAndStats(html);
+  } catch (e) {
+    return { ok: false, status: "TRAFFIC_DOWNLOAD_FAILED", error: `Could not parse navtrafficstats HTML: ${(e as Error).message}` };
+  }
+
+  // Walk every table and emit rows for any that look like a breakdown
+  // (i.e. have at least one of: feature, source, country) AND impressions/visits.
+  const out: Array<{ pageCategory: string; pageFeature: string; impressions: number | null; visits: number | null; ownerImpressions: number | null; ownerVisits: number | null }> = [];
+
+  for (const { headers, rows } of parsed.tables) {
+    if (!headers || headers.length === 0 || rows.length === 0) continue;
+
+    const colByKey: Partial<Record<keyof typeof TRAFFIC_HEADER_BUCKETS, number>> = {};
+    headers.forEach((h, idx) => {
+      const key = classifyTrafficHeader(h);
+      if (key && colByKey[key] === undefined) colByKey[key] = idx;
+    });
+
+    const hasMetric = colByKey.impressions !== undefined || colByKey.visits !== undefined;
+    const hasLabel = colByKey.feature !== undefined || colByKey.country !== undefined || colByKey.category !== undefined;
+    if (!hasMetric || !hasLabel) continue;
+
+    // Decide the synthetic Page / Category for rows in this table:
+    //  - If the table itself has a Country column → category = "Country"
+    //  - If the headers mention "bot" → "Bot Traffic"
+    //  - Otherwise prefer the explicit Category column, falling back to a
+    //    table-level label derived from the first non-feature header.
+    const isCountryTable = colByKey.country !== undefined;
+    const headerJoined = headers.join(" ").toLowerCase();
+    const isBotTable = /\bbot/.test(headerJoined);
+
+    for (const cells of rows) {
+      const featureRaw = isCountryTable
+        ? (cells[colByKey.country!] ?? "")
+        : (cells[colByKey.feature ?? colByKey.category ?? 0] ?? "");
+      const feature = String(featureRaw ?? "").trim();
+      if (feature === "") continue;
+      const explicitCategory = colByKey.category !== undefined ? String(cells[colByKey.category] ?? "").trim() : "";
+      const pageCategory = isCountryTable
+        ? "Country"
+        : isBotTable
+          ? "Bot Traffic"
+          : (explicitCategory !== "" ? explicitCategory : "Steamworks Traffic");
+      out.push({
+        pageCategory,
+        pageFeature: feature,
+        impressions: parseLooseInt(colByKey.impressions !== undefined ? cells[colByKey.impressions] : undefined),
+        visits: parseLooseInt(colByKey.visits !== undefined ? cells[colByKey.visits] : undefined),
+        ownerImpressions: parseLooseInt(colByKey.ownerImpressions !== undefined ? cells[colByKey.ownerImpressions] : undefined),
+        ownerVisits: parseLooseInt(colByKey.ownerVisits !== undefined ? cells[colByKey.ownerVisits] : undefined),
+      });
+    }
+  }
+
+  if (out.length === 0) {
+    return { ok: false, status: "TRAFFIC_DOWNLOAD_FAILED", error: `Fetched navtrafficstats but no breakdown rows were extractable for appid ${appId}. Steam may have changed the page layout.` };
+  }
+
+  const lines: string[] = [];
+  lines.push(TRAFFIC_CSV_HEADERS.map(csvCell).join(","));
+  for (const r of out) {
+    lines.push([
+      csvCell(r.pageCategory),
+      csvCell(r.pageFeature),
+      csvIntCell(r.impressions),
+      csvIntCell(r.visits),
+      csvIntCell(r.ownerImpressions),
+      csvIntCell(r.ownerVisits),
+    ].join(","));
+  }
+  const csvText = lines.join("\n") + "\n";
+  logger.info({ appId, startIso, endIso, rowCount: out.length, bytes: csvText.length }, "pullSteamworksTrafficCsv synthesized CSV");
+  return { ok: true, csvText, fileName, rowCount: out.length };
+}
+
 async function fetchVisits(
   appId: number,
   sessionid: string,

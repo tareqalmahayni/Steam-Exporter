@@ -24,7 +24,9 @@ import {
   type DataType,
   type PerGame,
   type WishlistPullSummary,
+  type TrafficRollupStatus,
 } from "@workspace/combined-export";
+import { pullSteamworksTrafficCsv } from "../lib/steamworks.js";
 
 const router: IRouter = Router();
 
@@ -97,6 +99,8 @@ interface GenerateBody {
   window?: unknown;
   trafficCsvs?: unknown;
   trafficSource?: unknown;
+  /** appid → { status, error } overrides for failed Steamworks pre-pulls. */
+  steamworksPullErrors?: unknown;
 }
 
 function parseGenerateBody(body: GenerateBody): {
@@ -106,6 +110,7 @@ function parseGenerateBody(body: GenerateBody): {
   window: { startIso: string; endIso: string };
   trafficCsvs: Record<string, { fileName: string; text: string }>;
   trafficSource: "csv" | "steamworks";
+  steamworksPullErrors: Record<string, { status: TrafficRollupStatus; error: string }>;
 } | { ok: false; error: string } {
   // selectedAppIds
   if (!Array.isArray(body.selectedAppIds) || body.selectedAppIds.length === 0) {
@@ -165,7 +170,28 @@ function parseGenerateBody(body: GenerateBody): {
   const trafficSource: "csv" | "steamworks" =
     body.trafficSource === "csv" ? "csv" : "steamworks";
 
-  return { ok: true, selected, dataType: dataType as DataType, window: { startIso, endIso }, trafficCsvs, trafficSource };
+  // steamworksPullErrors — per-appid overrides for the Steamworks pre-pull.
+  const steamworksPullErrors: Record<string, { status: TrafficRollupStatus; error: string }> = {};
+  if (body.steamworksPullErrors && typeof body.steamworksPullErrors === "object") {
+    for (const [appid, raw] of Object.entries(body.steamworksPullErrors as Record<string, unknown>)) {
+      if (raw && typeof raw === "object") {
+        const r = raw as { status?: unknown; error?: unknown };
+        const status = typeof r.status === "string" ? r.status : "";
+        const allowed: TrafficRollupStatus[] = ["STEAMWORKS_LOGIN_REQUIRED", "TRAFFIC_PAGE_ACCESS_DENIED", "TRAFFIC_DOWNLOAD_FAILED"];
+        if ((allowed as string[]).includes(status)) {
+          const rawErr = typeof r.error === "string" ? r.error : `${status} — ${appid}`;
+          steamworksPullErrors[appid] = {
+            status: status as TrafficRollupStatus,
+            // Cap renderer-supplied error text and strip any leading
+            // formula-injection prefix before it lands in the workbook.
+            error: rawErr.replace(/^[=+\-@]+/, "").slice(0, 500),
+          };
+        }
+      }
+    }
+  }
+
+  return { ok: true, selected, dataType: dataType as DataType, window: { startIso, endIso }, trafficCsvs, trafficSource, steamworksPullErrors };
 }
 
 router.post("/combined/generate", async (req: Request, res: Response) => {
@@ -175,7 +201,7 @@ router.post("/combined/generate", async (req: Request, res: Response) => {
     res.status(400).json({ status: "BAD_REQUEST", error: parsed.error });
     return;
   }
-  const { selected, dataType, window, trafficCsvs, trafficSource } = parsed;
+  const { selected, dataType, window, trafficCsvs, trafficSource, steamworksPullErrors } = parsed;
 
   const apiKey = process.env["STEAM_FINANCIAL_KEY"];
   if ((dataType === "wishlist" || dataType === "both") && (!apiKey || apiKey.trim() === "")) {
@@ -223,6 +249,7 @@ router.post("/combined/generate", async (req: Request, res: Response) => {
           : `Expected ${expectedTrafficFilename(spec, window)}`;
       log.push({ game: spec.displayName, event, detail });
     }
+    const pullErr = steamworksPullErrors[spec.appid];
     return processGame({
       spec,
       selected: true,
@@ -234,6 +261,8 @@ router.post("/combined/generate", async (req: Request, res: Response) => {
         : null,
       trafficCsv: csv,
       trafficSource,
+      trafficStatusOverride: pullErr?.status,
+      trafficErrorOverride: pullErr?.error,
     });
   });
 
@@ -282,6 +311,96 @@ router.post("/combined/generate", async (req: Request, res: Response) => {
     })),
     log,
   });
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/combined/pull-traffic-csv
+//   Body: {
+//     appid: string,
+//     startIso: string,
+//     endIso: string,
+//     cookies: { sessionid, steamLoginSecure, partnerSessionid?, partnerSteamLoginSecure? }
+//   }
+//   → { ok: true, fileName, text, rowCount } | { ok: false, status, error }
+// Used exclusively by the Electron main process (desktop:pullSteamworksTraffic
+// IPC) so cookies never leave the user's machine. The renderer never holds the
+// cookies — it asks the main process to pull, and receives back a synthesized
+// CSV identical in shape to what the manual upload path produces.
+// ---------------------------------------------------------------------------
+
+interface PullTrafficCsvBody {
+  appid?: unknown;
+  startIso?: unknown;
+  endIso?: unknown;
+  cookies?: unknown;
+}
+
+router.post("/combined/pull-traffic-csv", async (req: Request, res: Response) => {
+  const body = (req.body ?? {}) as PullTrafficCsvBody;
+  const appidStr = typeof body.appid === "string" ? body.appid.trim() : "";
+  const startIso = typeof body.startIso === "string" ? body.startIso.trim() : "";
+  const endIso = typeof body.endIso === "string" ? body.endIso.trim() : "";
+  const cookies = (body.cookies && typeof body.cookies === "object" ? body.cookies : {}) as {
+    sessionid?: unknown;
+    steamLoginSecure?: unknown;
+    partnerSessionid?: unknown;
+    partnerSteamLoginSecure?: unknown;
+  };
+  const sessionid = typeof cookies.sessionid === "string" ? cookies.sessionid : "";
+  const steamLoginSecure = typeof cookies.steamLoginSecure === "string" ? cookies.steamLoginSecure : "";
+  const partnerSessionid = typeof cookies.partnerSessionid === "string" ? cookies.partnerSessionid : "";
+  const partnerSteamLoginSecure = typeof cookies.partnerSteamLoginSecure === "string" ? cookies.partnerSteamLoginSecure : "";
+
+  const spec = GAME_SPECS.find((g) => g.appid === appidStr);
+  if (!spec) {
+    res.status(400).json({ ok: false, status: "BAD_REQUEST", error: `Unknown appid: ${appidStr}` });
+    return;
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(startIso) || !/^\d{4}-\d{2}-\d{2}$/.test(endIso)) {
+    res.status(400).json({ ok: false, status: "BAD_REQUEST", error: "startIso/endIso must be YYYY-MM-DD" });
+    return;
+  }
+  if (!sessionid || !steamLoginSecure) {
+    res.status(400).json({ ok: false, status: "STEAMWORKS_LOGIN_REQUIRED", error: "Missing partner.steamgames.com cookies — please sign in to Steamworks in the desktop app." });
+    return;
+  }
+
+  // NEVER log cookie values; only presence flags.
+  req.log.info(
+    {
+      appid: appidStr,
+      startIso,
+      endIso,
+      cookiesPresent: {
+        sessionid: !!sessionid,
+        steamLoginSecure: !!steamLoginSecure,
+        partnerSessionid: !!partnerSessionid,
+        partnerSteamLoginSecure: !!partnerSteamLoginSecure,
+      },
+    },
+    "pull-traffic-csv invoked",
+  );
+
+  try {
+    const result = await pullSteamworksTrafficCsv(
+      Number(appidStr),
+      startIso,
+      endIso,
+      spec.trafficFileToken,
+      sessionid,
+      steamLoginSecure,
+      partnerSessionid || undefined,
+      partnerSteamLoginSecure || undefined,
+    );
+    if (result.ok) {
+      res.json({ ok: true, fileName: result.fileName, text: result.csvText, rowCount: result.rowCount });
+    } else {
+      res.json({ ok: false, status: result.status, error: result.error });
+    }
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    res.status(500).json({ ok: false, status: "TRAFFIC_DOWNLOAD_FAILED", error: msg });
+  }
 });
 
 // ---------------------------------------------------------------------------

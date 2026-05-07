@@ -1,0 +1,95 @@
+Now implement the actual Steamworks online traffic pulling.
+
+Do not work on logo yet.
+Do not work on branding yet.
+Do not rebuild the UI from scratch.
+Do not change the date logic.
+Do not change wishlist pulling.
+Do not change Excel layout unless needed to insert real traffic data.
+Do not make CSV upload the main flow.
+
+Problem:
+The UI now shows “Pull Traffic from Steamworks”, but the app is not actually pulling traffic data online yet.
+
+Goal:
+When trafficSource = steamworks, the app must pull traffic data directly from Steamworks using the existing authenticated Electron Steamworks session.
+
+Use Option A:
+Extend the existing Electron desktop app and reuse the authenticated persist:steamworks session.
+
+Known existing file:
+artifacts/api-server/src/lib/steamworks.ts
+
+Implementation requirements:
+
+1. Add or complete Electron IPC:
+desktop:pullSteamworksTraffic(appid, start, end)
+
+2. Reuse the authenticated Steamworks session.
+Do not store Steam password.
+Do not bypass Steam Guard.
+Do not expose cookies/session data in the UI or logs.
+Keep session/cookie files local and gitignored.
+
+3. For each selected game:
+- Use the selected AppID
+- Use the visible selected start/end date
+- Open or fetch the Steamworks Store & Steam Platform Traffic Breakdown page
+- Apply the selected date range
+- Download, read, or scrape the traffic breakdown data
+- Extract:
+  - Page / Category
+  - Page / Feature
+  - Impressions
+  - Visits
+  - Owner Impressions
+  - Owner Visits
+  - Country rows
+  - Bot traffic rows
+
+4. Feed the pulled Steamworks traffic data into the same structure used by the proven traffic CSV parser.
+The Excel writer should not care whether the traffic came from CSV or Steamworks.
+
+5. Main flow behavior:
+If trafficSource = steamworks:
+- Do not require CSV upload
+- Do not validate CSV filenames
+- Pull traffic from Steamworks session
+- If no valid session exists, show STEAMWORKS_LOGIN_REQUIRED
+- If traffic page is inaccessible, show TRAFFIC_PAGE_ACCESS_DENIED
+- If traffic pull/download fails, show TRAFFIC_DOWNLOAD_FAILED
+- If wishlist succeeds but traffic fails, final status = PARTIAL
+- If traffic succeeds, Raw_Traffic and game sheets must show real traffic numbers
+
+6. Fallback behavior:
+If trafficSource = csv:
+- Use the existing CSV parser
+- Validate filenames
+- Show CSV errors only in fallback mode
+
+7. Testing:
+Replit web preview may not be able to fully test Electron session.
+Provide exact desktop/Electron test steps for me.
+
+Acceptance criteria:
+1. Steamworks traffic pull path is actually implemented.
+2. “Pull Traffic from Steamworks” no longer just returns empty traffic.
+3. If not logged in, it clearly shows STEAMWORKS_LOGIN_REQUIRED.
+4. After I log in through Electron, selected games can pull traffic online.
+5. Generated Excel includes real traffic data without CSV upload.
+6. Raw_Traffic is populated from Steamworks pull.
+7. Game sheets show impressions, visits, owner traffic, bot traffic, and breakdowns.
+8. CSV upload remains fallback/debug only.
+9. No fake 0s.
+10. No #VALUE, #N/A, undefined, null, or [object Object].
+
+After implementation, report:
+1. Files changed
+2. IPC channel added or updated
+3. How to start the Electron app
+4. How to log into Steamworks
+5. How to test online traffic pull
+6. What URL/page it uses for traffic
+7. Where output Excel is saved
+8. Whether Raw_Traffic is populated from Steamworks
+9. Any known limitations

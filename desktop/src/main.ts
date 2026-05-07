@@ -440,6 +440,85 @@ ipcMain.handle("desktop:clearStoredSteamCookies", async () => {
 
 ipcMain.handle("desktop:isDesktop", async () => true);
 
+// ─── IPC: Steamworks traffic pull ────────────────────────────────────────────
+// Reads the persisted Steamworks cookies from the main process partition
+// (renderer never sees them) and forwards them to the local API server's
+// /api/combined/pull-traffic-csv endpoint. Returns the synthesized CSV
+// (text + filename) or a structured error with one of the documented
+// status tokens (STEAMWORKS_LOGIN_REQUIRED / TRAFFIC_PAGE_ACCESS_DENIED /
+// TRAFFIC_DOWNLOAD_FAILED).
+type PullTrafficResult =
+  | { ok: true; fileName: string; text: string; rowCount: number }
+  | { ok: false; status: string; error: string };
+
+ipcMain.handle(
+  "desktop:pullSteamworksTraffic",
+  async (_e, appid: string, startIso: string, endIso: string): Promise<PullTrafficResult> => {
+    try {
+      if (!serverPort) {
+        return { ok: false, status: "TRAFFIC_DOWNLOAD_FAILED", error: "Local API server not ready." };
+      }
+      // requireFull=false: partner.steampowered.com cookies will be re-minted
+      // server-side via JWT refresh if the steamgames pair is present.
+      const creds = await readSteamCookies({ requireFull: false });
+      if (!creds) {
+        return {
+          ok: false,
+          status: "STEAMWORKS_LOGIN_REQUIRED",
+          error: "No Steamworks cookies found. Please sign in to Steamworks first.",
+        };
+      }
+
+      const payload = JSON.stringify({
+        appid,
+        startIso,
+        endIso,
+        cookies: {
+          sessionid: creds.sessionid,
+          steamLoginSecure: creds.steamLoginSecure,
+          partnerSessionid: creds.partnerSessionid,
+          partnerSteamLoginSecure: creds.partnerSteamLoginSecure,
+        },
+      });
+
+      return await new Promise<PullTrafficResult>((resolve) => {
+        const req = http.request(
+          {
+            host: "127.0.0.1",
+            port: serverPort!,
+            path: "/api/combined/pull-traffic-csv",
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Content-Length": Buffer.byteLength(payload),
+            },
+          },
+          (res) => {
+            const chunks: Buffer[] = [];
+            res.on("data", (c) => chunks.push(c as Buffer));
+            res.on("end", () => {
+              const body = Buffer.concat(chunks).toString("utf8");
+              try {
+                const parsed = JSON.parse(body) as PullTrafficResult;
+                resolve(parsed);
+              } catch {
+                resolve({ ok: false, status: "TRAFFIC_DOWNLOAD_FAILED", error: `Bad JSON from local server (HTTP ${res.statusCode}).` });
+              }
+            });
+          },
+        );
+        req.on("error", (err) => {
+          resolve({ ok: false, status: "TRAFFIC_DOWNLOAD_FAILED", error: `Local server request failed: ${err.message}` });
+        });
+        req.write(payload);
+        req.end();
+      });
+    } catch (err) {
+      return { ok: false, status: "TRAFFIC_DOWNLOAD_FAILED", error: (err as Error).message };
+    }
+  },
+);
+
 ipcMain.handle("desktop:openExternal", async (_e, url: string) => {
   if (typeof url === "string" && /^https?:/.test(url)) {
     await shell.openExternal(url);

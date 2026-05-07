@@ -22,6 +22,14 @@ declare global {
       saveSteamCookies: (
         creds: Credentials
       ) => Promise<{ ok: boolean; credentials?: Credentials; error?: string }>;
+      pullSteamworksTraffic: (
+        appid: string,
+        startIso: string,
+        endIso: string
+      ) => Promise<
+        | { ok: true; fileName: string; text: string; rowCount: number }
+        | { ok: false; status: string; error: string }
+      >;
     };
   }
 }
