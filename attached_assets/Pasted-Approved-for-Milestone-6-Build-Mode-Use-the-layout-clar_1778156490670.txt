@@ -1,0 +1,75 @@
+Approved for Milestone 6 Build Mode.
+
+Use the layout clarification exactly.
+
+Build the Combined Pull Data Alone export for all five games.
+
+Do not build UI yet.
+Do not build Electron yet.
+Do not scrape Steamworks dashboard yet.
+Do not add Ask Tracker yet.
+Do not modify the original tracker.
+
+Use:
+1. Wishlist API data from the proven all-games wishlist pull/cache.
+2. Traffic CSV data from .local/input/traffic/.
+
+Date range:
+2026-04-30 to 2026-05-06
+
+Output:
+Steamworks_Current_Pull_Combined_AllGames_2026-05-07.xlsx
+
+Required sheet order:
+
+1. Executive Summary
+2. Game Comparison
+3. Colossus - Eternal Blight
+4. Fleetbreakers
+5. Taival
+6. Noor
+7. Petunia's Purgatory
+8. Raw_Wishlist_API
+9. Raw_Traffic
+10. Validation
+11. Pull Log
+
+Important:
+The workbook must open on Executive Summary.
+Raw sheets must come after the game sheets.
+Validation and Pull Log must be at the end.
+
+The workbook must include only current pulled data.
+Do not include old tracker history.
+Do not include Dashboard.
+Do not include Consolidated KPI.
+Do not include KPI by Quarter.
+
+Use direct calculated values where possible.
+Do not show #VALUE, #N/A, undefined, null, or [object Object].
+Do not fake 0s.
+0 is allowed only when Steam API or CSV explicitly returned 0.
+
+Add Petunia warning:
+Visits exceed impressions because off-Steam referrers have 0 tracked impressions.
+
+After building, run the combined export and report:
+
+1. Output workbook path
+2. Whether wishlist cache was reused or Steam was re-pulled
+3. Whether traffic CSVs were used from .local/input/traffic
+4. Date range
+5. Wishlist totals per game
+6. Traffic totals per game
+7. Visit-to-impression ratio per game
+8. Warnings, especially Petunia
+9. Raw_Wishlist_API populated
+10. Raw_Traffic populated
+11. All five game sheets populated
+12. Validation status
+13. Whether sheet order exactly matches the requested layout
+14. Whether there are zero #VALUE cells
+15. Whether there are zero [object Object] cells
+16. Whether the workbook contains only current pulled data and no old tracker history
+
+Do not mark complete unless the combined workbook visibly contains wishlist and traffic data for all five games in the requested sheet order.
