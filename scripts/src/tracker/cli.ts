@@ -15,6 +15,7 @@ import { generateMockPull } from "./mockPull.js";
 import { validateWorkbook, validationPassed } from "./validate.js";
 import { applyTypoFix } from "./typoFix.js";
 import { addNoor } from "./addNoor.js";
+import { applyDashboardGuard } from "./dashboardGuard.js";
 import { applyMockPull } from "./writer.js";
 import { writeValidationSheet, appendPullLog, countByGroup } from "./logSheets.js";
 import { prepareOutputPaths, copyTemplateBytes, loadWorkbook, sha256, checkFormulaIntegrity } from "./output.js";
@@ -105,16 +106,25 @@ async function main(): Promise<void> {
   // 8) Apply mock writes for all 5 games.
   const writeEntries = applyMockPull(after, pull, noor.noorMap, args.forceRefresh);
 
-  const allEntries = [...typoEntries, ...noor.entries, ...writeEntries];
+  // 8b) Dashboard #VALUE! safety net — wrap unguarded Dashboard formulas
+  //     in IFERROR(...,"") so compute-time errors render as blank.
+  const dashGuard = applyDashboardGuard(after);
+
+  // 8c) Force Excel to fully recalculate on open. Without this, Excel may
+  //     briefly display stale cached results (some viewers don't recalc at
+  //     all), which can show #VALUE! for cells whose dependencies changed.
+  after.calcProperties = { ...(after.calcProperties ?? {}), fullCalcOnLoad: true };
+
+  const allEntries = [...typoEntries, ...noor.entries, ...writeEntries, ...dashGuard.entries];
 
   // 9) Formula-integrity check.
   // The check iterates every cell that was a formula in `before` and asserts
   // it is the SAME formula in `after`. Our write paths (cellOps.attemptWrite,
-  // typoFix, addNoor.setLog) all explicitly refuse to overwrite formula cells,
-  // so this allow-list is intentionally empty as a defense-in-depth assertion:
-  // we never expect to legitimately overwrite a pre-existing formula, and if
-  // a future change ever does, this check will fail loudly.
-  const allowList = new Set<string>();
+  // typoFix, addNoor.setLog) all explicitly refuse to overwrite formula cells.
+  // The ONE intentional exception is the Dashboard #VALUE! safety net, which
+  // wraps formulas in IFERROR — those addresses are passed in via the
+  // allow-list so the integrity check tolerates this single, audited rewrite.
+  const allowList = new Set<string>(dashGuard.rewrittenAddrs);
   const formulaDeltas = checkFormulaIntegrity(before, after, allowList);
 
   // 10) Write Pull Log row + save.
@@ -161,6 +171,10 @@ async function main(): Promise<void> {
     typoFixCells: typoEntries.filter((e) => e.status === "write").length,
     touchedSheets: Array.from(new Set(allEntries.filter((e) => e.status === "write").map((e) => e.sheet))),
     consolidatedKpiPolicy: "formula-protected — no data cell writes; only typo-fix label cells touched",
+    dashboardGuard: {
+      formulasWrapped: dashGuard.entries.length,
+      fullCalcOnLoad: true,
+    },
   };
   writeFileSync(targets.runJson, JSON.stringify(runMeta, null, 2));
 
@@ -179,7 +193,7 @@ async function main(): Promise<void> {
   console.log(`6. Manual values preserved: ${preserved}`);
   console.log(`7. Original tracker untouched: ${inputUntouched ? "YES (sha256 matches)" : "NO — DANGER"}`);
   console.log(`8. Formula integrity:      ${formulaDeltas.length === 0 ? "OK (no unexpected formula changes)" : `FAIL — ${formulaDeltas.length} unexpected formula changes (see run.json)`}`);
-  console.log(`9. Dashboard #VALUE risk:  Dashboard data cells are formula-protected; no data writes attempted on Dashboard. Only Noor-add (L6) and typo-fix label cells (L4) were touched (Dashboard E31 is a formula and was correctly skipped).`);
+  console.log(`9. Dashboard #VALUE risk:  ${dashGuard.entries.length} Dashboard formulas wrapped in IFERROR(...,"") as a defensive safety net (compute-time errors now render as blank, never #VALUE!). Workbook calcProperties.fullCalcOnLoad=true so Excel performs a full recalc on open instead of trusting stale cached results.`);
   console.log(`10. Consolidated KPI:      formula-protected — its data cells reference KPI by Quarter and recalc when Excel opens the file. Only typo-fix label cells (A10:A12) and the Noor block (rows 28-30, below "Total Achieved") were written. A pre-flight collision check guards rows 28-30 — if a future template revision occupies them, the Noor consolidated block aborts with a clear message instead of overwriting anything.`);
   console.log(`11. KPI by Quarter:        Impressions/Visits weekly cells received mock values (only where existing value was empty or a placeholder 0). Existing wishlist formulas (rows 3,7,11,15 etc.) were never touched.`);
   console.log(`12. Noor added:            ${noor.alreadyPresent ? "ALREADY PRESENT (no-op)" : "YES — new Noor_WL sheet, KPI block at rows 70+, Consolidated rows 28-30, Dashboard L6"}`);

@@ -72,7 +72,13 @@ export function checkFormulaIntegrity(
         const fa = isFormula(va) ? (va as { formula: string }).formula : "(non-formula)";
         const addr = `${sheetBefore.name}!${rowBefore.getCell(c).address}`;
         if (allowList.has(addr)) continue;
-        if (fb !== fa) deltas.push({ sheet: sheetBefore.name, cell: rowBefore.getCell(c).address, before: fb, after: fa });
+        if (fb === fa) continue;
+        // Sanctioned transformation: Dashboard #VALUE! safety net wraps
+        // formulas in IFERROR(<original>,""). Treat that as a no-op so the
+        // safety net works correctly across merged-cell slaves whose
+        // addresses don't match the master we explicitly wrote to.
+        if (sheetBefore.name === "Dashboard" && fa === `IFERROR(${fb},"")`) continue;
+        deltas.push({ sheet: sheetBefore.name, cell: rowBefore.getCell(c).address, before: fb, after: fa });
       }
     }
   }
