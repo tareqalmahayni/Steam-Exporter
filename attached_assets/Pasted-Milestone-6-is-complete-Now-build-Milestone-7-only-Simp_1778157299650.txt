@@ -1,0 +1,154 @@
+Milestone 6 is complete.
+
+Now build Milestone 7 only: Simple web app UI around the working reporting engine.
+
+Do not build Electron yet.
+Do not scrape Steamworks dashboard yet.
+Do not add Ask Tracker yet.
+Do not modify the original tracker.
+Do not rewrite the proven data engine unless necessary.
+
+Goal:
+Create a simple app UI that lets the user generate the combined Excel report using the working wishlist API and traffic CSV parser.
+
+The UI should let the user choose:
+
+1. Games to pull
+Checkboxes:
+- Colossus - Eternal Blight
+- Fleetbreakers
+- Taival
+- Noor
+- Petunia's Purgatory
+- Select All
+
+2. Data type
+Checkboxes:
+- Wishlist data
+- Traffic data
+- Both
+
+3. Date range
+Options:
+- Latest completed week
+- Custom from/to
+
+For now, default to:
+2026-04-30 to 2026-05-06
+
+4. Export mode
+Options:
+- Pull Data Alone
+- Add to Master Tracker
+
+For this milestone:
+Pull Data Alone should work.
+Add to Master Tracker can appear as disabled or “Coming soon” if needed.
+
+5. Traffic CSV upload
+Allow uploading one CSV per selected game.
+
+Expected traffic CSV filename pattern:
+traffic_<game>_<appid>_<startYYYYMMDD>_<endYYYYMMDD>.csv
+
+Required files for all games:
+traffic_colossus_1722800_YYYYMMDD_YYYYMMDD.csv
+traffic_fleetbreakers_2929040_YYYYMMDD_YYYYMMDD.csv
+traffic_taival_3152750_YYYYMMDD_YYYYMMDD.csv
+traffic_noor_3728760_YYYYMMDD_YYYYMMDD.csv
+traffic_petunia_4009450_YYYYMMDD_YYYYMMDD.csv
+
+6. Generate Report button
+
+When clicked:
+- Validate selected games
+- Validate selected data type
+- Validate traffic CSVs if traffic is selected
+- Pull wishlist data through the existing Steam API service
+- Parse traffic CSVs through the existing traffic parser
+- Generate the combined Pull Data Alone workbook
+- Show status/progress
+- Provide download link
+
+Output:
+Steamworks_Current_Pull_Combined_SelectedGames_YYYY-MM-DD.xlsx
+
+Important:
+The UI must use the proven Milestone 6 engine.
+Do not create a separate fake export path.
+Do not write fake 0s.
+Do not hide failed pulls.
+Do not include unselected games in the report.
+If a selected game has no traffic CSV, show TRAFFIC_CSV_MISSING.
+If a game is not selected, exclude it completely.
+
+UI pages or sections:
+
+1. Setup
+- Shows whether STEAM_FINANCIAL_KEY exists
+- Shows app status
+
+2. Select Games
+- Game checkboxes
+- Select All
+
+3. Choose Data
+- Wishlist
+- Traffic
+- Both
+
+4. Date Range
+- Latest completed week
+- Custom date range
+
+5. Upload Traffic CSVs
+- Upload area
+- File validation status per game
+
+6. Generate Report
+- Progress/status log
+- Validation messages
+- Download button
+
+Status messages should be clear:
+- READY
+- MISSING_FINANCIAL_KEY
+- TRAFFIC_CSV_MISSING
+- PULLING_WISHLIST
+- PARSING_TRAFFIC
+- GENERATING_EXCEL
+- PASSED
+- PARTIAL
+- FAILED
+
+Acceptance criteria:
+1. UI loads successfully.
+2. User can select specific games, not only all games.
+3. User can choose Wishlist, Traffic, or Both.
+4. User can upload traffic CSVs.
+5. User can generate the combined Pull Data Alone Excel.
+6. Report includes only selected games.
+7. Report keeps the correct sheet order:
+   Executive Summary
+   Game Comparison
+   Selected game sheets
+   Raw_Wishlist_API
+   Raw_Traffic
+   Validation
+   Pull Log
+8. Download link works.
+9. Errors are shown clearly.
+10. No Electron yet.
+11. No Ask Tracker yet.
+12. No Steamworks dashboard scraping yet.
+
+After building, run the app and report:
+1. Files changed
+2. Command to start the app
+3. Local/Replit preview URL
+4. Whether STEAM_FINANCIAL_KEY is detected
+5. Whether game selection works
+6. Whether traffic CSV upload works
+7. Whether selected-games export works
+8. Output workbook path
+9. Any errors or warnings

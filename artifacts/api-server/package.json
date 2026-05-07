@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@workspace/api-zod": "workspace:*",
+    "@workspace/combined-export": "workspace:*",
     "@workspace/db": "workspace:*",
     "cheerio": "^1.2.0",
     "cookie-parser": "^1.4.7",
