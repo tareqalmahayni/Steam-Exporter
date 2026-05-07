@@ -14,6 +14,12 @@ export interface GameSpec {
   displayName: string;
   /** Filename token used in the traffic CSV (not user-facing). */
   trafficFileToken: string;
+  /**
+   * First date for which Steam has wishlist reporting for this game (YYYY-MM-DD).
+   * Required for the "Lifetime" date option. Leave undefined to block Lifetime
+   * runs for this game until a real date is supplied.
+   */
+  trackingStartDate?: string;
 }
 
 export const GAME_SPECS: GameSpec[] = [

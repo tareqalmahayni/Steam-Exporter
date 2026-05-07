@@ -22,6 +22,7 @@ interface SetupGame {
   cacheId: string;
   appid: string;
   displayName: string;
+  trackingStartDate: string | null;
 }
 
 interface SetupResponse {
@@ -52,7 +53,15 @@ interface GenerateResponse {
 }
 
 type DataType = "wishlist" | "traffic" | "both";
-type DateMode = "latest" | "custom";
+type DateMode = "today" | "previousMonth" | "previousYear" | "lifetime" | "preference";
+
+const DATE_MODE_LABEL: Record<DateMode, string> = {
+  today: "Today",
+  previousMonth: "Previous Month (rolling 30 days)",
+  previousYear: "Previous Year (rolling 365 days)",
+  lifetime: "Lifetime",
+  preference: "Preference (custom range)",
+};
 
 const API = (path: string) => `${import.meta.env.BASE_URL}api${path}`;
 
@@ -87,7 +96,7 @@ export function ReportBuilder() {
 
   const [selectedAppIds, setSelectedAppIds] = useState<Set<string>>(new Set());
   const [dataType, setDataType] = useState<DataType>("both");
-  const [dateMode, setDateMode] = useState<DateMode>("custom");
+  const [dateMode, setDateMode] = useState<DateMode>("preference");
   const [startIso, setStartIso] = useState("2026-04-30");
   const [endIso, setEndIso] = useState("2026-05-06");
   const [trafficCsvs, setTrafficCsvs] = useState<Record<string, { fileName: string; text: string }>>({});
@@ -107,17 +116,66 @@ export function ReportBuilder() {
     return () => { cancelled = true; };
   }, []);
 
-  // When date mode changes to "latest", set 7-day window ending yesterday.
-  useEffect(() => {
-    if (dateMode === "latest") {
-      setEndIso(isoNDaysAgo(1));
-      setStartIso(isoNDaysAgo(7));
-    }
-  }, [dateMode]);
-
   const games = setup?.games ?? [];
   const allSelected = games.length > 0 && selectedAppIds.size === games.length;
   const trafficRequested = dataType === "traffic" || dataType === "both";
+  const selectedGames = useMemo(
+    () => games.filter((g) => selectedAppIds.has(g.appid)),
+    [games, selectedAppIds],
+  );
+
+  // Earliest trackingStartDate among selected games (for Lifetime). null if any
+  // selected game lacks one.
+  const lifetimeStart: string | null = useMemo(() => {
+    if (selectedGames.length === 0) return null;
+    const dates = selectedGames.map((g) => g.trackingStartDate);
+    if (dates.some((d) => !d)) return null;
+    return (dates as string[]).reduce((a, b) => (a < b ? a : b));
+  }, [selectedGames]);
+
+  // For Lifetime / Today: end = today (proxy for "latest available completed
+  // Steam reporting date"). The UI surfaces a notice for Today since Steam
+  // sometimes hasn't published today's numbers yet.
+  const todayIso = isoToday();
+
+  // Compute the canonical (start, end) for the active dateMode. For
+  // "preference" we trust the user-controlled state values; for the rolling
+  // modes we recompute on every render so they always reflect today.
+  const { computedStart, computedEnd, dateModeBlocker } = useMemo(() => {
+    if (dateMode === "today") {
+      return { computedStart: todayIso, computedEnd: todayIso, dateModeBlocker: null as string | null };
+    }
+    if (dateMode === "previousMonth") {
+      return { computedStart: isoNDaysAgo(29), computedEnd: todayIso, dateModeBlocker: null };
+    }
+    if (dateMode === "previousYear") {
+      return { computedStart: isoNDaysAgo(364), computedEnd: todayIso, dateModeBlocker: null };
+    }
+    if (dateMode === "lifetime") {
+      if (selectedGames.length === 0) {
+        return { computedStart: "", computedEnd: todayIso, dateModeBlocker: "Pick at least one game to compute Lifetime." };
+      }
+      const missing = selectedGames.filter((g) => !g.trackingStartDate).map((g) => g.displayName);
+      if (missing.length > 0) {
+        return {
+          computedStart: "",
+          computedEnd: todayIso,
+          dateModeBlocker: `Lifetime requires a trackingStartDate for: ${missing.join(", ")}. Add them to GAME_SPECS in lib/combined-export/src/games.ts.`,
+        };
+      }
+      return { computedStart: lifetimeStart ?? "", computedEnd: todayIso, dateModeBlocker: null };
+    }
+    return { computedStart: startIso, computedEnd: endIso, dateModeBlocker: null };
+  }, [dateMode, todayIso, selectedGames, lifetimeStart, startIso, endIso]);
+
+  // Push computed values back into startIso / endIso whenever the active mode
+  // is one of the rolling modes (so Generate sends the right window).
+  useEffect(() => {
+    if (dateMode !== "preference" && computedStart && computedEnd) {
+      setStartIso(computedStart);
+      setEndIso(computedEnd);
+    }
+  }, [dateMode, computedStart, computedEnd]);
 
   const toggleGame = (appid: string) => {
     setSelectedAppIds((prev) => {
@@ -150,14 +208,15 @@ export function ReportBuilder() {
     const errs: string[] = [];
     if (!setup) return { errs, ok: false };
     if (selectedAppIds.size === 0) errs.push("Pick at least one game.");
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(startIso) || !/^\d{4}-\d{2}-\d{2}$/.test(endIso)) errs.push("Start and end dates must be YYYY-MM-DD.");
+    if (dateModeBlocker) errs.push(dateModeBlocker);
+    else if (!/^\d{4}-\d{2}-\d{2}$/.test(startIso) || !/^\d{4}-\d{2}-\d{2}$/.test(endIso)) errs.push("Start and end dates must be YYYY-MM-DD.");
     else if (startIso > endIso) errs.push(`Start date (${startIso}) is after end date (${endIso}).`);
     else if (endIso > isoToday()) errs.push("End date cannot be in the future.");
     if ((dataType === "wishlist" || dataType === "both") && setup && !setup.hasFinancialKey) {
       errs.push("STEAM_FINANCIAL_KEY is not configured on the server — wishlist pulls will fail.");
     }
     return { errs, ok: errs.length === 0 };
-  }, [setup, selectedAppIds, startIso, endIso, dataType]);
+  }, [setup, selectedAppIds, startIso, endIso, dataType, dateModeBlocker]);
 
   const generate = async () => {
     setBusy(true);
@@ -306,42 +365,66 @@ export function ReportBuilder() {
         {/* 4. Date range */}
         <Section title="4. Date range">
           <div className="space-y-3 text-sm">
-            <div className="flex flex-wrap gap-4">
-              <label className="flex items-center gap-2">
-                <input type="radio" name="dateMode" checked={dateMode === "latest"} onChange={() => setDateMode("latest")} data-testid="radio-date-latest" />
-                Latest week (yesterday − 6 days → yesterday)
-              </label>
-              <label className="flex items-center gap-2">
-                <input type="radio" name="dateMode" checked={dateMode === "custom"} onChange={() => setDateMode("custom")} data-testid="radio-date-custom" />
-                Custom range
-              </label>
-            </div>
-            <div className="flex flex-wrap gap-3 items-end">
-              <label className="flex flex-col gap-1">
-                <span className="text-xs text-muted-foreground">Start</span>
-                <input
-                  type="date"
-                  value={startIso}
-                  max={isoToday()}
-                  disabled={dateMode === "latest"}
-                  onChange={(e) => setStartIso(e.target.value)}
-                  className="border rounded px-2 py-1 bg-background"
-                  data-testid="input-start-date"
-                />
-              </label>
-              <label className="flex flex-col gap-1">
-                <span className="text-xs text-muted-foreground">End</span>
-                <input
-                  type="date"
-                  value={endIso}
-                  max={isoToday()}
-                  disabled={dateMode === "latest"}
-                  onChange={(e) => setEndIso(e.target.value)}
-                  className="border rounded px-2 py-1 bg-background"
-                  data-testid="input-end-date"
-                />
-              </label>
-            </div>
+            <label className="flex flex-col gap-1">
+              <span className="text-xs text-muted-foreground">Range</span>
+              <select
+                value={dateMode}
+                onChange={(e) => setDateMode(e.target.value as DateMode)}
+                className="border rounded px-2 py-1 bg-background w-full sm:w-80"
+                data-testid="select-date-mode"
+              >
+                {(Object.keys(DATE_MODE_LABEL) as DateMode[]).map((m) => (
+                  <option key={m} value={m}>{DATE_MODE_LABEL[m]}</option>
+                ))}
+              </select>
+            </label>
+
+            {dateModeBlocker ? (
+              <div className="text-xs text-amber-600" data-testid="text-date-blocker">{dateModeBlocker}</div>
+            ) : (
+              <div className="text-xs text-muted-foreground" data-testid="text-date-computed">
+                <span className="font-medium text-foreground">Start:</span> {computedStart || "—"}
+                {"  "}
+                <span className="font-medium text-foreground">End:</span> {computedEnd || "—"}
+                {dateMode === "today" && (
+                  <div className="mt-1 text-amber-600">
+                    Today's Steam report may not be available yet. Showing the latest available completed reporting date if Steam has not published today's numbers.
+                  </div>
+                )}
+                {dateMode === "lifetime" && lifetimeStart && (
+                  <div className="mt-1">
+                    Earliest trackingStartDate across selected games: {lifetimeStart}.
+                  </div>
+                )}
+              </div>
+            )}
+
+            {dateMode === "preference" && (
+              <div className="flex flex-wrap gap-3 items-end">
+                <label className="flex flex-col gap-1">
+                  <span className="text-xs text-muted-foreground">Start Date</span>
+                  <input
+                    type="date"
+                    value={startIso}
+                    max={isoToday()}
+                    onChange={(e) => setStartIso(e.target.value)}
+                    className="border rounded px-2 py-1 bg-background"
+                    data-testid="input-start-date"
+                  />
+                </label>
+                <label className="flex flex-col gap-1">
+                  <span className="text-xs text-muted-foreground">End Date</span>
+                  <input
+                    type="date"
+                    value={endIso}
+                    max={isoToday()}
+                    onChange={(e) => setEndIso(e.target.value)}
+                    className="border rounded px-2 py-1 bg-background"
+                    data-testid="input-end-date"
+                  />
+                </label>
+              </div>
+            )}
           </div>
         </Section>
 

@@ -73,6 +73,7 @@ router.get("/combined/setup", (_req, res) => {
       cacheId: g.cacheId,
       appid: g.appid,
       displayName: g.displayName,
+      trackingStartDate: g.trackingStartDate ?? null,
     })),
     defaultWindow: { startIso: "2026-04-30", endIso: "2026-05-06" },
   });

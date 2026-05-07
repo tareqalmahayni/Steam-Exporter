@@ -58,6 +58,7 @@ export type WishlistRollupStatus =
 export type TrafficRollupStatus =
   | "REAL_DATA"
   | "TRAFFIC_CSV_MISSING"
+  | "TRAFFIC_CSV_DATE_RANGE_MISMATCH"
   | "PARSE_FAILED"
   | "TRAFFIC_NOT_REQUESTED";
 
@@ -249,11 +250,16 @@ export function processGame(input: ProcessGameInput): PerGame {
     });
     warnings.push(...ident.warnings);
     errors.push(...ident.errors);
+    const dateMismatch = !!(ident.startIso && ident.endIso
+      && (ident.startIso !== expectedWindow.startIso || ident.endIso !== expectedWindow.endIso));
     if (!ident.ok || !ident.appid || !ident.startIso || !ident.endIso) {
       trafficStatus = "PARSE_FAILED";
     } else if (ident.appid !== spec.appid) {
       errors.push(`Traffic CSV AppID ${ident.appid} mismatched expected ${spec.appid} for ${spec.displayName}`);
       trafficStatus = "PARSE_FAILED";
+    } else if (dateMismatch) {
+      errors.push(`TRAFFIC_CSV_DATE_RANGE_MISMATCH: ${trafficCsv.fileName} covers ${ident.startIso} → ${ident.endIso} but selected window is ${expectedWindow.startIso} → ${expectedWindow.endIso}`);
+      trafficStatus = "TRAFFIC_CSV_DATE_RANGE_MISMATCH";
     } else {
       trafficStartIso = ident.startIso;
       trafficEndIso = ident.endIso;

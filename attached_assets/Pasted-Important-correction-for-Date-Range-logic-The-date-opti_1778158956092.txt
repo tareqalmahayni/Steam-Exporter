@@ -1,0 +1,77 @@
+Important correction for Date Range logic.
+
+The date options are rolling ranges, not calendar ranges.
+
+Only show these 5 options:
+
+1. Today
+2. Previous Month
+3. Previous Year
+4. Lifetime
+5. Preference
+
+Definitions:
+
+Today:
+Start date = today
+End date = today
+If Steam wishlist reporting for today is not available yet, use the latest available completed Steam reporting date and show:
+“Today’s Steam report may not be available yet. Showing latest available completed reporting date.”
+
+Previous Month:
+This does NOT mean the previous calendar month.
+It means today plus the previous 29 days.
+Total range = 30 days.
+Example:
+If today is 2026-05-07:
+Start date = 2026-04-08
+End date = 2026-05-07
+
+Previous Year:
+This does NOT mean the previous calendar year.
+It means today plus the previous 364 days.
+Total range = 365 days.
+Example:
+If today is 2026-05-07:
+Start date = 2025-05-08
+End date = 2026-05-07
+
+Lifetime:
+Start date = the selected game’s Steam trackingStartDate.
+End date = today/latest available completed Steam reporting date.
+If trackingStartDate is missing for any selected game, block the run and ask the user to add it.
+Do not pull lifetime from an arbitrary date.
+
+Preference:
+Custom date range selected manually by the user.
+Show Start Date and End Date fields only when Preference is selected.
+
+UI requirements:
+- Replace the old date options with only these 5:
+  Today
+  Previous Month
+  Previous Year
+  Lifetime
+  Preference
+- Prefer a dropdown.
+- Show the calculated Start and End dates below the dropdown.
+- Default can remain Preference using the current test range:
+  2026-04-30 to 2026-05-06
+- Remove Latest Week and Custom Range wording.
+- Rename Custom Range to Preference.
+
+Traffic CSV rule:
+For traffic data, uploaded CSV filename date range must match the calculated selected date range.
+If not, show:
+TRAFFIC_CSV_DATE_RANGE_MISMATCH
+
+Acceptance criteria:
+1. Only the 5 requested date options appear.
+2. Today = one day only.
+3. Previous Month = rolling 30 days including today.
+4. Previous Year = rolling 365 days including today.
+5. Lifetime = trackingStartDate to today/latest completed Steam reporting date.
+6. Preference = user-selected start and end dates.
+7. The UI shows calculated start/end dates clearly.
+8. Wishlist pulls use the selected range.
+9. Traffic CSV validation uses the selected range.
