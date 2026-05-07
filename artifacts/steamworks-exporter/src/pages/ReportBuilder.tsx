@@ -54,6 +54,12 @@ interface GenerateResponse {
 
 type DataType = "wishlist" | "traffic" | "both";
 type DateMode = "today" | "previousWeek" | "previousMonth" | "previousYear" | "lifetime" | "preference";
+type TrafficSource = "steamworks" | "csv";
+
+const TRAFFIC_SOURCE_LABEL: Record<TrafficSource, string> = {
+  steamworks: "Pull Traffic from Steamworks (main)",
+  csv: "Fallback: Upload Traffic CSV Manually",
+};
 
 const DATE_MODE_LABEL: Record<DateMode, string> = {
   today: "Today",
@@ -97,6 +103,7 @@ export function ReportBuilder() {
 
   const [selectedAppIds, setSelectedAppIds] = useState<Set<string>>(new Set());
   const [dataType, setDataType] = useState<DataType>("both");
+  const [trafficSource, setTrafficSource] = useState<TrafficSource>("steamworks");
   const [dateMode, setDateMode] = useState<DateMode>("preference");
   const [startIso, setStartIso] = useState("2026-04-30");
   const [endIso, setEndIso] = useState("2026-05-06");
@@ -219,8 +226,16 @@ export function ReportBuilder() {
     if ((dataType === "wishlist" || dataType === "both") && setup && !setup.hasFinancialKey) {
       errs.push("STEAM_FINANCIAL_KEY is not configured on the server — wishlist pulls will fail.");
     }
+    // Only complain about CSVs when the user explicitly opted into the
+    // fallback CSV upload path. The main Steamworks-pull path doesn't
+    // require uploads.
+    if (trafficRequested && trafficSource === "csv") {
+      for (const g of selectedGames) {
+        if (!trafficCsvs[g.appid]) errs.push(`TRAFFIC_CSV_MISSING — ${g.displayName}`);
+      }
+    }
     return { errs, ok: errs.length === 0 };
-  }, [setup, selectedAppIds, startIso, endIso, dataType, dateModeBlocker]);
+  }, [setup, selectedAppIds, startIso, endIso, dataType, dateModeBlocker, trafficRequested, trafficSource, selectedGames, trafficCsvs]);
 
   const generate = async () => {
     setBusy(true);
@@ -251,7 +266,8 @@ export function ReportBuilder() {
         selectedAppIds: Array.from(selectedAppIds),
         dataType,
         window: { startIso, endIso },
-        trafficCsvs: trafficRequested ? trafficCsvs : {},
+        trafficCsvs: trafficRequested && trafficSource === "csv" ? trafficCsvs : {},
+        trafficSource,
       };
       const res = await fetch(API("/combined/generate"), {
         method: "POST",
@@ -432,9 +448,42 @@ export function ReportBuilder() {
           </div>
         </Section>
 
-        {/* 5. Upload CSVs */}
+        {/* 5a. Traffic source */}
         {trafficRequested && (
-          <Section title="5. Fallback: Upload Traffic CSV Manually">
+          <Section title="5. Traffic source">
+            <div className="space-y-2 text-sm">
+              {(Object.keys(TRAFFIC_SOURCE_LABEL) as TrafficSource[]).map((src) => (
+                <label key={src} className="flex items-start gap-2">
+                  <input
+                    type="radio"
+                    name="trafficSource"
+                    checked={trafficSource === src}
+                    onChange={() => setTrafficSource(src)}
+                    data-testid={`radio-traffic-source-${src}`}
+                    className="mt-0.5"
+                  />
+                  <span>
+                    <span className="font-medium">{TRAFFIC_SOURCE_LABEL[src]}</span>
+                    {src === "steamworks" && (
+                      <div className="text-xs text-muted-foreground">
+                        Pulls each game's Store &amp; Steam Platform Traffic Breakdown directly from your authenticated Steamworks session. Requires the desktop app — in the web preview this will surface STEAMWORKS_LOGIN_REQUIRED.
+                      </div>
+                    )}
+                    {src === "csv" && (
+                      <div className="text-xs text-muted-foreground">
+                        Debug-only path. Upload one Steamworks-exported CSV per selected game; filenames must match the selected date range.
+                      </div>
+                    )}
+                  </span>
+                </label>
+              ))}
+            </div>
+          </Section>
+        )}
+
+        {/* 5b. Upload CSVs — only when fallback source is selected */}
+        {trafficRequested && trafficSource === "csv" && (
+          <Section title="5b. Fallback: Upload Traffic CSV Manually">
             {selectedAppIds.size === 0 ? (
               <p className="text-sm text-muted-foreground">Pick at least one game above.</p>
             ) : (
@@ -487,7 +536,10 @@ export function ReportBuilder() {
               {selectedGames.length === 0 ? "—" : selectedGames.map((g) => g.displayName).join(", ")}
             </div>
             <div><span className="font-medium">Selected data type:</span> {dataType}</div>
-            {trafficRequested && selectedGames.length > 0 && !dateModeBlocker && (
+            {trafficRequested && (
+              <div><span className="font-medium">Traffic source:</span> {TRAFFIC_SOURCE_LABEL[trafficSource]}</div>
+            )}
+            {trafficRequested && trafficSource === "csv" && selectedGames.length > 0 && !dateModeBlocker && (
               <div className="pt-2">
                 <div className="font-medium mb-1">Traffic CSV pre-flight (fallback mode):</div>
                 <table className="w-full text-[11px] border-collapse">

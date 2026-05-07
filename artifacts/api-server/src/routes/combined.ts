@@ -96,6 +96,7 @@ interface GenerateBody {
   dataType?: unknown;
   window?: unknown;
   trafficCsvs?: unknown;
+  trafficSource?: unknown;
 }
 
 function parseGenerateBody(body: GenerateBody): {
@@ -104,6 +105,7 @@ function parseGenerateBody(body: GenerateBody): {
   dataType: DataType;
   window: { startIso: string; endIso: string };
   trafficCsvs: Record<string, { fileName: string; text: string }>;
+  trafficSource: "csv" | "steamworks";
 } | { ok: false; error: string } {
   // selectedAppIds
   if (!Array.isArray(body.selectedAppIds) || body.selectedAppIds.length === 0) {
@@ -158,7 +160,12 @@ function parseGenerateBody(body: GenerateBody): {
     }
   }
 
-  return { ok: true, selected, dataType: dataType as DataType, window: { startIso, endIso }, trafficCsvs };
+  // trafficSource — defaults to "steamworks" (main flow). "csv" is the
+  // fallback/debug mode that requires uploaded CSVs.
+  const trafficSource: "csv" | "steamworks" =
+    body.trafficSource === "csv" ? "csv" : "steamworks";
+
+  return { ok: true, selected, dataType: dataType as DataType, window: { startIso, endIso }, trafficCsvs, trafficSource };
 }
 
 router.post("/combined/generate", async (req: Request, res: Response) => {
@@ -168,7 +175,7 @@ router.post("/combined/generate", async (req: Request, res: Response) => {
     res.status(400).json({ status: "BAD_REQUEST", error: parsed.error });
     return;
   }
-  const { selected, dataType, window, trafficCsvs } = parsed;
+  const { selected, dataType, window, trafficCsvs, trafficSource } = parsed;
 
   const apiKey = process.env["STEAM_FINANCIAL_KEY"];
   if ((dataType === "wishlist" || dataType === "both") && (!apiKey || apiKey.trim() === "")) {
@@ -204,7 +211,17 @@ router.post("/combined/generate", async (req: Request, res: Response) => {
     const summary = wishlistByAppId.get(spec.appid) ?? null;
     const csv = trafficCsvs[spec.appid] ?? null;
     if (dataType !== "wishlist") {
-      log.push({ game: spec.displayName, event: csv ? "PARSING_TRAFFIC" : "TRAFFIC_CSV_MISSING", detail: csv ? csv.fileName : `Expected ${expectedTrafficFilename(spec, window)}` });
+      const event = csv
+        ? "PARSING_TRAFFIC"
+        : trafficSource === "steamworks"
+          ? "STEAMWORKS_LOGIN_REQUIRED"
+          : "TRAFFIC_CSV_MISSING";
+      const detail = csv
+        ? csv.fileName
+        : trafficSource === "steamworks"
+          ? `No authenticated Steamworks session for ${spec.displayName}`
+          : `Expected ${expectedTrafficFilename(spec, window)}`;
+      log.push({ game: spec.displayName, event, detail });
     }
     return processGame({
       spec,
@@ -216,6 +233,7 @@ router.post("/combined/generate", async (req: Request, res: Response) => {
         ? `Wishlist pull returned no data for ${spec.displayName}`
         : null,
       trafficCsv: csv,
+      trafficSource,
     });
   });
 
@@ -232,7 +250,9 @@ router.post("/combined/generate", async (req: Request, res: Response) => {
       ? `Steam Partner Financial API (live pull at ${pullTimestamp})`
       : "(wishlist not requested)",
     trafficSourceLabel: dataType !== "wishlist"
-      ? `Uploaded traffic CSVs (${Object.keys(trafficCsvs).length} files)`
+      ? trafficSource === "steamworks"
+        ? `Steamworks authenticated session (live pull at ${pullTimestamp})`
+        : `Fallback CSV upload (${Object.keys(trafficCsvs).length} files)`
       : "(traffic not requested)",
     finalStatus,
     dataType,

@@ -59,6 +59,9 @@ export type TrafficRollupStatus =
   | "REAL_DATA"
   | "TRAFFIC_CSV_MISSING"
   | "TRAFFIC_CSV_DATE_RANGE_MISMATCH"
+  | "STEAMWORKS_LOGIN_REQUIRED"
+  | "TRAFFIC_PAGE_ACCESS_DENIED"
+  | "TRAFFIC_DOWNLOAD_FAILED"
   | "PARSE_FAILED"
   | "TRAFFIC_NOT_REQUESTED";
 
@@ -179,10 +182,20 @@ export interface ProcessGameInput {
   wishlistMissingReason?: string | null;
   /** Uploaded traffic CSV (text + filename); null if not provided. */
   trafficCsv: { fileName: string; text: string } | null;
+  /**
+   * Where traffic data should come from.
+   * - "csv" (default): require an uploaded CSV per game; missing → TRAFFIC_CSV_MISSING.
+   * - "steamworks": pulled directly from the user's authenticated Steamworks
+   *   session (Electron). When no `trafficCsv` is provided here it means the
+   *   pull has not yet been wired/completed, and we surface
+   *   STEAMWORKS_LOGIN_REQUIRED instead of complaining about a missing CSV.
+   */
+  trafficSource?: "csv" | "steamworks";
 }
 
 export function processGame(input: ProcessGameInput): PerGame {
   const { spec, selected, dataType, expectedWindow, wishlistSummary, wishlistMissingReason, trafficCsv } = input;
+  const trafficSource: "csv" | "steamworks" = input.trafficSource ?? "csv";
   const warnings: string[] = [];
   const errors: string[] = [];
 
@@ -240,8 +253,16 @@ export function processGame(input: ProcessGameInput): PerGame {
   if (!trafficRequested) {
     trafficStatus = "TRAFFIC_NOT_REQUESTED";
   } else if (!trafficCsv) {
-    trafficStatus = "TRAFFIC_CSV_MISSING";
-    errors.push(`Traffic CSV missing: ${expectedTrafficFileName}`);
+    if (trafficSource === "steamworks") {
+      // Main flow: traffic should have come from the authenticated Steamworks
+      // session. The absence of data here means the desktop session was not
+      // available (or the auto-pull plumbing is not yet wired in this build).
+      trafficStatus = "STEAMWORKS_LOGIN_REQUIRED";
+      errors.push(`STEAMWORKS_LOGIN_REQUIRED — could not pull traffic for ${spec.displayName} from Steamworks (no authenticated session available).`);
+    } else {
+      trafficStatus = "TRAFFIC_CSV_MISSING";
+      errors.push(`TRAFFIC_CSV_MISSING — ${expectedTrafficFileName}`);
+    }
   } else {
     trafficSourceFileName = trafficCsv.fileName;
     const ident = validateTrafficFileIdentity(trafficCsv.fileName, {

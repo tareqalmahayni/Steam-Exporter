@@ -1,0 +1,64 @@
+Choose Option A.
+
+Use the existing Electron authenticated Steamworks session.
+
+Important correction to the previous message:
+
+Traffic CSV is NOT the main traffic method.
+
+The main app flow must pull traffic data directly from Steamworks.
+
+Manual CSV upload is fallback/debug only.
+
+Therefore:
+
+1. Do not require CSV files when the user selects Traffic or Both in the main flow.
+2. Do not show TRAFFIC_CSV_MISSING in the normal main Steamworks traffic pull flow.
+3. Only check for TRAFFIC_CSV_MISSING or TRAFFIC_CSV_DATE_RANGE_MISMATCH if the user explicitly selects:
+   Fallback: Upload Traffic CSV Manually
+
+Main traffic flow should be:
+
+User selects games
+User selects date range
+User selects Traffic or Both
+App pulls wishlist through Steam API
+App pulls traffic directly from Steamworks website/session
+App generates report
+
+Traffic source options should be:
+
+1. Pull Traffic from Steamworks
+   Default/main option
+
+2. Fallback: Upload Traffic CSV Manually
+   Only for testing/debugging
+
+Behavior:
+
+If traffic source = Pull Traffic from Steamworks:
+
+- Do not require CSV upload.
+- Do not validate CSV filenames.
+- Use the existing Electron authenticated Steamworks session.
+- Do not store my Steam password.
+- Do not bypass Steam Guard.
+- Reuse the session only after I log in manually.
+- Keep session/cookie files local and gitignored.
+- Do not expose cookies or session data in the UI or logs.
+- If login/session is missing, show STEAMWORKS_LOGIN_REQUIRED.
+- If traffic page cannot be accessed, show TRAFFIC_PAGE_ACCESS_DENIED.
+- If traffic download/pull fails, show TRAFFIC_DOWNLOAD_FAILED.
+- If wishlist works but traffic pull fails, report status should be PARTIAL.
+
+If traffic source = Fallback CSV:
+
+- Then and only then validate uploaded CSV files.
+- Then use TRAFFIC_CSV_MISSING if missing.
+- Then use TRAFFIC_CSV_DATE_RANGE_MISMATCH if date range does not match.
+
+The normal user should not need to manually export CSVs from Steamworks every time.
+
+CSV upload is only fallback/debug.
+
+Please patch the UI and validation logic accordingly.
