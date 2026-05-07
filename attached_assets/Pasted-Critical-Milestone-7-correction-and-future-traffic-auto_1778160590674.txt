@@ -1,0 +1,521 @@
+Critical Milestone 7 correction and future traffic automation clarification.
+
+Do not rebuild the app from scratch.
+Patch the existing working UI and reporting flow.
+Do not break the proven wishlist API engine.
+Do not break the proven traffic CSV parser.
+Do not modify the original tracker.
+
+Context:
+The app is functioning, but several important fixes are needed before continuing.
+
+Main problems:
+
+1. Date options are not exactly correct.
+2. Today must be dynamic, not hardcoded to the test date.
+3. Reports can produce different wishlist totals because the date range changes silently.
+4. Traffic CSV validation must match the exact selected date range.
+5. Traffic data was missing in the generated workbook because the selected range did not match uploaded traffic CSV filenames.
+6. Manual CSV upload is only a fallback/debug method, not the final main traffic flow.
+7. The final app must pull traffic data from Steamworks automatically so the user does not manually export CSVs every time.
+
+==================================================
+PART 1 — FINAL DATE RANGE UI
+============================
+
+Only show these 6 date options:
+
+1. Today
+2. Previous Week
+3. Previous Month
+4. Previous Year
+5. Lifetime
+6. Preference
+
+Remove any other options, including:
+
+* Latest week
+* Latest completed week
+* Previous calendar month
+* Previous calendar year
+* Custom Range wording
+* Any extra presets
+
+Rename Custom Range to:
+Preference
+
+Date definitions:
+
+Today:
+Start date = runtime current date
+End date = runtime current date
+
+Today means the real current calendar date when the app is opened or used.
+Do not hardcode 2026-05-07.
+Do not hardcode any test date.
+
+Examples:
+If user opens app on 2026-05-07:
+Today = 2026-05-07
+
+If user opens app on 2026-05-08:
+Today = 2026-05-08
+
+If user opens app on 2026-05-09:
+Today = 2026-05-09
+
+Previous Week:
+Rolling 7-day range.
+Start date = runtime current date minus 6 days
+End date = runtime current date
+
+Example:
+If runtime today is 2026-05-07:
+Start = 2026-05-01
+End = 2026-05-07
+
+If runtime today is 2026-05-08:
+Start = 2026-05-02
+End = 2026-05-08
+
+Previous Month:
+Rolling 30-day range.
+Start date = runtime current date minus 29 days
+End date = runtime current date
+
+Example:
+If runtime today is 2026-05-07:
+Start = 2026-04-08
+End = 2026-05-07
+
+Previous Year:
+Rolling 365-day range.
+Start date = runtime current date minus 364 days
+End date = runtime current date
+
+Example:
+If runtime today is 2026-05-07:
+Start = 2025-05-08
+End = 2026-05-07
+
+Lifetime:
+Start date = selected game trackingStartDate
+End date = runtime current date
+
+If trackingStartDate is missing for any selected game, block the run and show:
+MISSING_TRACKING_START_DATE
+
+Do not pull lifetime from an arbitrary old date.
+
+Preference:
+The user manually selects Start Date and End Date.
+Show Start Date and End Date fields only when Preference is selected.
+Use exactly the dates selected by the user.
+Do not change them.
+
+Important date behavior:
+The generated report must use exactly the visible selected/calculated date range.
+The app must never silently change the selected date range.
+The app must never secretly replace Today with yesterday or with 2026-05-07.
+The app must never silently shift to the latest available reporting date.
+
+If Steam wishlist data is unavailable for a selected date, show:
+WISHLIST_DATA_NOT_AVAILABLE_FOR_SELECTED_DATE
+
+Do not fake values.
+Do not change the date range without asking.
+Do not return 0 unless Steam explicitly returned true 0.
+
+Add a visible Date Confirmation block before Generate Report:
+
+Selected preset:
+Runtime today:
+Calculated start date:
+Calculated end date:
+Selected games:
+Selected data type:
+Expected traffic CSV filename per selected game:
+
+Also add a visible note:
+“Wishlist totals depend on the selected date range.”
+
+Example issue to prevent:
+Taival net wishlist was 481 for:
+2026-04-30 to 2026-05-06
+
+But Taival net wishlist can be different, for example 421, for:
+2026-05-01 to 2026-05-07
+
+This is expected because the date range changed.
+The app must make the date range obvious before generation and inside the report.
+
+==================================================
+PART 2 — SELECTED GAMES
+=======================
+
+The final app must allow the user to choose which games to pull.
+
+Game checkboxes:
+
+* Colossus - Eternal Blight
+* Fleetbreakers
+* Taival
+* Noor
+* Petunia's Purgatory
+* Select All
+
+The selected games must control:
+
+1. Which wishlist API calls are made
+2. Which traffic files or traffic automation pulls are required
+3. Which game sheets appear in the Excel workbook
+4. Which games appear in Executive Summary
+5. Which games appear in Game Comparison
+6. Which rows appear in Validation and Pull Log
+
+If the user selects only Taival and Petunia, the workbook should include only:
+
+1. Executive Summary
+2. Game Comparison
+3. Taival
+4. Petunia's Purgatory
+5. Raw_Wishlist_API
+6. Raw_Traffic
+7. Validation
+8. Pull Log
+
+Do not include unselected game sheets.
+Do not mark unselected games as missing.
+Unselected games should be fully excluded from the report.
+
+==================================================
+PART 3 — DATA TYPE OPTIONS
+==========================
+
+User can choose:
+
+* Wishlist
+* Traffic
+* Both
+
+If Wishlist is selected:
+Pull wishlist data only.
+Do not require traffic CSVs or traffic automation.
+
+If Traffic is selected:
+Pull/parse traffic data only.
+Do not pull wishlist API.
+
+If Both is selected:
+Pull wishlist data and pull/parse matching traffic data.
+
+If Both is selected and wishlist succeeds but traffic is missing, the report status should be:
+PARTIAL
+
+Not PASSED.
+
+==================================================
+PART 4 — EXPORT MODE
+====================
+
+Keep:
+
+* Pull Data Alone
+* Add to Master Tracker
+
+For now:
+Pull Data Alone should work.
+
+Add to Master Tracker can remain disabled or Coming Soon if not connected yet.
+
+==================================================
+PART 5 — REPORT LAYOUT
+======================
+
+The combined Excel report sheet order must be:
+
+1. Executive Summary
+2. Game Comparison
+3. Selected game sheets only
+4. Raw_Wishlist_API
+5. Raw_Traffic
+6. Validation
+7. Pull Log
+
+Do not include:
+
+* Dashboard
+* Consolidated KPI
+* KPI by Quarter
+* Old tracker history
+* Old manual values
+* Unselected games
+
+The workbook must be manager-ready.
+
+Do not show:
+
+* #VALUE
+* #N/A
+* undefined
+* null
+* [object Object]
+
+Do not fake 0s.
+0 is allowed only when Steam API, Steamworks traffic report, or CSV explicitly returned 0.
+
+==================================================
+PART 6 — TRAFFIC CSV FALLBACK VALIDATION
+========================================
+
+Manual CSV upload is only fallback/debug mode.
+
+For fallback CSV mode:
+If Traffic or Both is selected, uploaded traffic CSV filenames must match the exact selected date range.
+
+Expected filename pattern:
+traffic_<game>*<appid>*<startYYYYMMDD>_<endYYYYMMDD>.csv
+
+Example:
+Selected range:
+2026-04-30 to 2026-05-06
+
+Expected files:
+traffic_colossus_1722800_20260430_20260506.csv
+traffic_fleetbreakers_2929040_20260430_20260506.csv
+traffic_taival_3152750_20260430_20260506.csv
+traffic_noor_3728760_20260430_20260506.csv
+traffic_petunia_4009450_20260430_20260506.csv
+
+Example:
+Selected range:
+2026-05-01 to 2026-05-07
+
+Expected files:
+traffic_colossus_1722800_20260501_20260507.csv
+traffic_fleetbreakers_2929040_20260501_20260507.csv
+traffic_taival_3152750_20260501_20260507.csv
+traffic_noor_3728760_20260501_20260507.csv
+traffic_petunia_4009450_20260501_20260507.csv
+
+If a selected game is missing its traffic CSV, show:
+TRAFFIC_CSV_MISSING
+
+If the uploaded CSV is for a different date range, show:
+TRAFFIC_CSV_DATE_RANGE_MISMATCH
+
+Do not generate a report that looks successful while traffic data is missing.
+
+The UI should show a pre-generation traffic validation table:
+
+Game | Expected CSV | Found? | Status
+
+Example:
+Taival | traffic_taival_3152750_20260430_20260506.csv | YES | READY
+Petunia's Purgatory | traffic_petunia_4009450_20260430_20260506.csv | YES | READY
+
+or:
+
+Taival | traffic_taival_3152750_20260501_20260507.csv | NO | TRAFFIC_CSV_MISSING
+
+The report must only show traffic numbers when matching traffic data was actually found and parsed.
+
+==================================================
+PART 7 — MAIN TRAFFIC FLOW MUST BE AUTOMATED, NOT CSV-ONLY
+==========================================================
+
+Important clarification:
+Manual traffic CSV upload is only a fallback/debug method.
+
+The main purpose of the app is to pull traffic data from Steamworks automatically so the user does not have to manually visit Steamworks, export CSVs, rename files, and upload them every time.
+
+Final traffic flow should be:
+
+1. User selects games
+2. User selects date range
+3. User selects Traffic or Both
+4. App uses an authenticated Steamworks browser session or official traffic API if available
+5. App opens/pulls each selected game’s Store & Steam Platform Traffic Breakdown data
+6. App applies the requested date range
+7. App downloads or reads the traffic breakdown
+8. App parses impressions, visits, owner impressions, owner visits, bot traffic, page/source breakdown, and country breakdown
+9. App generates the Excel report
+
+Wishlist data should continue using the official Steam financial API.
+
+Traffic data should be pulled from Steamworks automatically unless an official traffic Web API endpoint is discovered.
+
+Manual CSV upload should remain available only as:
+Fallback / Debug Mode
+
+In the UI, label CSV upload as:
+Fallback: Upload Traffic CSV Manually
+
+The main traffic button later should be:
+Pull Traffic from Steamworks
+
+==================================================
+PART 8 — TRAFFIC API / AUTOMATION DECISION
+==========================================
+
+Before implementing automatic traffic pulling, check whether there is an official Steamworks Web API endpoint available for Store & Steam Platform Traffic Breakdown.
+
+If an official endpoint exists:
+
+1. Report the endpoint name and required permissions.
+2. Tell me what secret/API key is needed.
+3. Ask me to add it to Replit Secrets.
+4. Do not hardcode the key.
+5. Do not expose the key in frontend code.
+6. Do not log the key.
+
+If no official endpoint exists:
+Use browser automation through Playwright or equivalent.
+
+Browser automation requirements:
+
+* Support manual Steam login and Steam Guard on first run.
+* Save browser session securely.
+* Reuse session if still valid.
+* Never store Steam password in code.
+* Never ask the user to paste Steam password into logs.
+* Never expose cookies or session files in the UI.
+* Store session files only in a local ignored folder.
+* Ensure session/cookie files are gitignored.
+* For each selected game, navigate to Steamworks traffic report.
+* Apply selected date range.
+* Download/read Store & Steam Platform Traffic Breakdown.
+* Parse it using the proven Milestone 5 traffic parser.
+* Generate the combined Excel report.
+* If session expires, show STEAMWORKS_LOGIN_REQUIRED.
+* If traffic page is inaccessible, show TRAFFIC_PAGE_ACCESS_DENIED.
+* If download fails, show TRAFFIC_DOWNLOAD_FAILED.
+* Keep manual CSV upload as fallback only.
+
+Important:
+Do not attempt to bypass Steam login or Steam Guard.
+The user must log in manually when needed.
+The app should only reuse a valid authenticated session after the user logs in.
+
+==================================================
+PART 9 — UI STATUS LABELS
+=========================
+
+Use clear statuses:
+
+READY
+MISSING_FINANCIAL_KEY
+STEAMWORKS_LOGIN_REQUIRED
+PULLING_WISHLIST
+PULLING_TRAFFIC
+PARSING_TRAFFIC
+TRAFFIC_CSV_MISSING
+TRAFFIC_CSV_DATE_RANGE_MISMATCH
+TRAFFIC_PAGE_ACCESS_DENIED
+TRAFFIC_DOWNLOAD_FAILED
+WISHLIST_DATA_NOT_AVAILABLE_FOR_SELECTED_DATE
+GENERATING_EXCEL
+PASSED
+PARTIAL
+FAILED
+
+==================================================
+PART 10 — ACCEPTANCE CRITERIA
+=============================
+
+Acceptance criteria:
+
+1. Date dropdown shows only:
+   Today
+   Previous Week
+   Previous Month
+   Previous Year
+   Lifetime
+   Preference
+
+2. Today uses the real runtime current date.
+
+3. Previous Week uses runtime today minus 6 days to runtime today.
+
+4. Previous Month uses runtime today minus 29 days to runtime today.
+
+5. Previous Year uses runtime today minus 364 days to runtime today.
+
+6. Lifetime uses trackingStartDate to runtime today.
+
+7. Preference uses exactly the manually selected dates.
+
+8. No hardcoded 2026-05-07 remains.
+
+9. The UI shows the selected/calculated start and end date before Generate Report.
+
+10. Expected traffic CSV filenames update based on selected date range.
+
+11. Traffic fallback mode clearly shows missing/mismatched CSVs before generation.
+
+12. The app clearly labels CSV upload as fallback/debug, not the main traffic flow.
+
+13. The app has a plan or first implementation path for automatic Steamworks traffic pulling.
+
+14. If a new API key/secret is needed, ask me to add it to Replit Secrets before trying to use it.
+
+15. The generated workbook uses exactly the visible selected date range.
+
+16. Selected-games export still works.
+
+17. Unselected games do not appear in the workbook.
+
+18. Wishlist-only mode does not require traffic.
+
+19. Traffic-only mode does not pull wishlist.
+
+20. Both mode returns PARTIAL if wishlist succeeds but traffic is missing.
+
+21. No fake 0s.
+
+22. No #VALUE, #N/A, undefined, null, or [object Object].
+
+23. The report remains clean and manager-ready.
+
+==================================================
+PART 11 — TEST AFTER PATCHING
+=============================
+
+After fixing, run a test using:
+
+Games:
+
+* Taival
+* Petunia's Purgatory
+
+Data type:
+Both
+
+Date option:
+Preference
+
+Start:
+2026-04-30
+
+End:
+2026-05-06
+
+This should expect:
+traffic_taival_3152750_20260430_20260506.csv
+traffic_petunia_4009450_20260430_20260506.csv
+
+Then report:
+
+1. Files changed
+2. Whether date dropdown now has only the 6 requested options
+3. Runtime today used by the app
+4. Calculated start/end for each preset
+5. Whether Preference uses exactly 2026-04-30 to 2026-05-06
+6. Whether expected CSV filenames are correct
+7. Whether selected-games export still works
+8. Whether traffic appears when matching CSVs exist
+9. Whether missing traffic produces PARTIAL instead of fake PASSED
+10. Whether automatic traffic pulling requires a new API key or browser automation
+11. If API is needed, what secret name I should add
+12. Output workbook path
+13. Any warnings/errors

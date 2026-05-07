@@ -57,11 +57,11 @@ type DateMode = "today" | "previousWeek" | "previousMonth" | "previousYear" | "l
 
 const DATE_MODE_LABEL: Record<DateMode, string> = {
   today: "Today",
-  previousWeek: "Previous Week (rolling 7 days)",
-  previousMonth: "Previous Month (rolling 30 days)",
-  previousYear: "Previous Year (rolling 365 days)",
+  previousWeek: "Previous Week",
+  previousMonth: "Previous Month",
+  previousYear: "Previous Year",
   lifetime: "Lifetime",
-  preference: "Preference (custom range)",
+  preference: "Preference",
 };
 
 const API = (path: string) => `${import.meta.env.BASE_URL}api${path}`;
@@ -164,7 +164,7 @@ export function ReportBuilder() {
         return {
           computedStart: "",
           computedEnd: todayIso,
-          dateModeBlocker: `Lifetime requires a trackingStartDate for: ${missing.join(", ")}. Add them to GAME_SPECS in lib/combined-export/src/games.ts.`,
+          dateModeBlocker: `MISSING_TRACKING_START_DATE — ${missing.join(", ")}. Add a trackingStartDate for each in GAME_SPECS (lib/combined-export/src/games.ts).`,
         };
       }
       return { computedStart: lifetimeStart ?? "", computedEnd: todayIso, dateModeBlocker: null };
@@ -434,7 +434,7 @@ export function ReportBuilder() {
 
         {/* 5. Upload CSVs */}
         {trafficRequested && (
-          <Section title="5. Upload one traffic CSV per selected game">
+          <Section title="5. Fallback: Upload Traffic CSV Manually">
             {selectedAppIds.size === 0 ? (
               <p className="text-sm text-muted-foreground">Pick at least one game above.</p>
             ) : (
@@ -474,6 +474,56 @@ export function ReportBuilder() {
 
         {/* 6. Generate */}
         <Section title="6. Generate report">
+          {/* Date Confirmation block — shows exactly what will be sent, so the
+              user can never be surprised by silent shifts (Taival 481 vs 421
+              issue). Also surfaces expected traffic CSV filenames per game. */}
+          <div className="text-xs border rounded p-3 mb-3 space-y-1 bg-muted/20" data-testid="block-date-confirmation">
+            <div><span className="font-medium">Selected preset:</span> {DATE_MODE_LABEL[dateMode]}</div>
+            <div><span className="font-medium">Runtime today:</span> {todayIso}</div>
+            <div><span className="font-medium">Calculated start date:</span> {dateModeBlocker ? "—" : (computedStart || "—")}</div>
+            <div><span className="font-medium">Calculated end date:</span> {dateModeBlocker ? "—" : (computedEnd || "—")}</div>
+            <div>
+              <span className="font-medium">Selected games:</span>{" "}
+              {selectedGames.length === 0 ? "—" : selectedGames.map((g) => g.displayName).join(", ")}
+            </div>
+            <div><span className="font-medium">Selected data type:</span> {dataType}</div>
+            {trafficRequested && selectedGames.length > 0 && !dateModeBlocker && (
+              <div className="pt-2">
+                <div className="font-medium mb-1">Traffic CSV pre-flight (fallback mode):</div>
+                <table className="w-full text-[11px] border-collapse">
+                  <thead>
+                    <tr className="text-left text-muted-foreground">
+                      <th className="border-b py-1 pr-2">Game</th>
+                      <th className="border-b py-1 pr-2">Expected CSV</th>
+                      <th className="border-b py-1 pr-2">Found?</th>
+                      <th className="border-b py-1">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {selectedGames.map((g) => {
+                      const expected = expectedTrafficFilename(g.appid, g.displayName, computedStart, computedEnd);
+                      const uploaded = trafficCsvs[g.appid];
+                      let status: "READY" | "TRAFFIC_CSV_MISSING" | "TRAFFIC_CSV_DATE_RANGE_MISMATCH" = "TRAFFIC_CSV_MISSING";
+                      if (uploaded) {
+                        status = uploaded.fileName === expected ? "READY" : "TRAFFIC_CSV_DATE_RANGE_MISMATCH";
+                      }
+                      const cls = status === "READY" ? "text-emerald-600"
+                        : status === "TRAFFIC_CSV_MISSING" ? "text-amber-600" : "text-red-600";
+                      return (
+                        <tr key={g.appid} data-testid={`row-traffic-preflight-${g.id}`}>
+                          <td className="py-1 pr-2 align-top">{g.displayName}</td>
+                          <td className="py-1 pr-2 align-top font-mono break-all">{expected}</td>
+                          <td className="py-1 pr-2 align-top">{uploaded ? "YES" : "NO"}</td>
+                          <td className={`py-1 align-top ${cls}`}>{status}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <div className="pt-2 text-amber-600">Wishlist totals depend on the selected date range.</div>
+          </div>
           {validation.errs.length > 0 && (
             <ul className="text-xs text-amber-600 list-disc pl-5 mb-3">
               {validation.errs.map((e, i) => <li key={i}>{e}</li>)}
