@@ -61,7 +61,7 @@ export function validateWorkbook(wb: Workbook): ValidationCheck[] {
         push(
           `KPI block header A${r.headerRow} (${game.id} ${q})`,
           ok,
-          `expected "${game.canonicalName}"${game.id === "petunia" ? ' or "Putania\'s Purgatory"' : ""}, got "${label}"`,
+          `expected "${game.canonicalName}", got "${label}"`,
         );
         const wlCellA = stringifyCell(kpi.getCell(`A${r.wishlistsRow}`).value);
         const impA = stringifyCell(kpi.getCell(`A${r.impressionsRow}`).value);

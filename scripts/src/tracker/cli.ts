@@ -14,6 +14,7 @@ import { parseRangeArg, resolveRange } from "./dateWindow.js";
 import { generateMockPull } from "./mockPull.js";
 import { validateWorkbook, validationPassed } from "./validate.js";
 import { applyTypoFix } from "./typoFix.js";
+import { applyTypoSweep } from "./typoSweep.js";
 import { addNoor } from "./addNoor.js";
 import { applyDashboardGuard } from "./dashboardGuard.js";
 import { applyMockPull } from "./writer.js";
@@ -106,6 +107,12 @@ async function main(): Promise<void> {
   // 8) Apply mock writes for all 5 games.
   const writeEntries = applyMockPull(after, pull, noor.noorMap, args.forceRefresh);
 
+  // 8a) Final typo cleanup sweep — fix any remaining "Putania's Purgatory"
+  //     occurrences in plain text cells (any sheet) and Dashboard formula
+  //     literals. Runs BEFORE the dashboard #VALUE! guard so the wrap sees
+  //     the corrected formulas.
+  const typoSweep = applyTypoSweep(after);
+
   // 8b) Dashboard #VALUE! safety net — wrap unguarded Dashboard formulas
   //     in IFERROR(...,"") so compute-time errors render as blank.
   const dashGuard = applyDashboardGuard(after);
@@ -115,16 +122,18 @@ async function main(): Promise<void> {
   //     all), which can show #VALUE! for cells whose dependencies changed.
   after.calcProperties = { ...(after.calcProperties ?? {}), fullCalcOnLoad: true };
 
-  const allEntries = [...typoEntries, ...noor.entries, ...writeEntries, ...dashGuard.entries];
+  const allEntries = [...typoEntries, ...noor.entries, ...writeEntries, ...typoSweep.entries, ...dashGuard.entries];
 
   // 9) Formula-integrity check.
   // The check iterates every cell that was a formula in `before` and asserts
   // it is the SAME formula in `after`. Our write paths (cellOps.attemptWrite,
   // typoFix, addNoor.setLog) all explicitly refuse to overwrite formula cells.
-  // The ONE intentional exception is the Dashboard #VALUE! safety net, which
-  // wraps formulas in IFERROR — those addresses are passed in via the
-  // allow-list so the integrity check tolerates this single, audited rewrite.
-  const allowList = new Set<string>(dashGuard.rewrittenAddrs);
+  // The intentional exceptions are: (a) the Dashboard #VALUE! safety net
+  // wrapping formulas in IFERROR, and (b) the typo-sweep rewriting Dashboard
+  // formula literals "Putania's Purgatory" → "Petunia's Purgatory". Both
+  // contribute their touched addresses to this allow-list; integrity check
+  // tolerates only those audited rewrites.
+  const allowList = new Set<string>([...dashGuard.rewrittenAddrs, ...typoSweep.rewrittenFormulaAddrs]);
   const formulaDeltas = checkFormulaIntegrity(before, after, allowList);
 
   // 10) Write Pull Log row + save.
@@ -197,7 +206,10 @@ async function main(): Promise<void> {
   console.log(`10. Consolidated KPI:      formula-protected — its data cells reference KPI by Quarter and recalc when Excel opens the file. Only typo-fix label cells (A10:A12) and the Noor block (rows 28-30, below "Total Achieved") were written. A pre-flight collision check guards rows 28-30 — if a future template revision occupies them, the Noor consolidated block aborts with a clear message instead of overwriting anything.`);
   console.log(`11. KPI by Quarter:        Impressions/Visits weekly cells received mock values (only where existing value was empty or a placeholder 0). Existing wishlist formulas (rows 3,7,11,15 etc.) were never touched.`);
   console.log(`12. Noor added:            ${noor.alreadyPresent ? "ALREADY PRESENT (no-op)" : "YES — new Noor_WL sheet, KPI block at rows 70+, Consolidated rows 28-30, Dashboard L6"}`);
-  console.log(`13. Putania→Petunia typo:  fixed ${typoEntries.filter((e) => e.status === "write").length} cells in the COPIED output only`);
+  const typoTotal = typoEntries.filter((e) => e.status === "write").length + typoSweep.entries.length;
+  const sweepFormulaCount = typoSweep.rewrittenFormulaAddrs.length;
+  const sweepTextCount = typoSweep.entries.length - sweepFormulaCount;
+  console.log(`13. Putania→Petunia typo:  fixed ${typoTotal} cells in the COPIED output only (${typoEntries.filter((e) => e.status === "write").length} targeted label cells + ${sweepTextCount} sweep text cells + ${sweepFormulaCount} sweep Dashboard-formula literals; "putania" remains as internal source-code alias only)`);
   console.log(`\nInspect changelog: head -n 20 ${targets.changelogMd}`);
   console.log(`Filter by status:  jq -r 'select(.status=="write")' ${targets.changelogJsonl}`);
 }

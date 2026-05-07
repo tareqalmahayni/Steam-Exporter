@@ -18,3 +18,21 @@ id = "RPt12pg_eHtqelyu8H4oj"
 uri = "file://.local/tracker-runs/2026-05-07T10-07-30-836Z/run.json"
 type = "unspecified"
 title = "Run metadata"
+
+[[outputs]]
+id = "mLfHXNPwu__FSJP_7ilZh"
+uri = "file://.local/tracker-runs/2026-05-07T10-22-59-843Z/Steamworks_Tracker_DRY_RUN_2026-05-07.xlsx"
+type = "table"
+title = "Steamworks_Tracker_DRY_RUN_2026-05-07.xlsx (Putania→Petunia sweep applied)"
+
+[[outputs]]
+id = "V4UM7MIammOkeYp1Wx7at"
+uri = "file://.local/tracker-runs/2026-05-07T10-22-59-843Z/changelog.md"
+type = "text"
+title = "Change log (markdown)"
+
+[[outputs]]
+id = "9MWVxkfu6lZa5NI8Rg7Qb"
+uri = "file://.local/tracker-runs/2026-05-07T10-22-59-843Z/run.json"
+type = "unspecified"
+title = "Run metadata"

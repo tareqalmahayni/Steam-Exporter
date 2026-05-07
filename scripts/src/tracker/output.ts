@@ -73,11 +73,17 @@ export function checkFormulaIntegrity(
         const addr = `${sheetBefore.name}!${rowBefore.getCell(c).address}`;
         if (allowList.has(addr)) continue;
         if (fb === fa) continue;
-        // Sanctioned transformation: Dashboard #VALUE! safety net wraps
-        // formulas in IFERROR(<original>,""). Treat that as a no-op so the
-        // safety net works correctly across merged-cell slaves whose
-        // addresses don't match the master we explicitly wrote to.
-        if (sheetBefore.name === "Dashboard" && fa === `IFERROR(${fb},"")`) continue;
+        // Sanctioned transformations on Dashboard (handles merged-cell slaves
+        // automatically without enumerating every slave address):
+        //   (1) #VALUE! safety net wraps formulas in IFERROR(<original>,"")
+        //   (2) typo sweep replaces "Putania's Purgatory" → "Petunia's Purgatory"
+        //   (3) both transforms applied together (typo inside IFERROR wrap)
+        if (sheetBefore.name === "Dashboard") {
+          const fbTypoFixed = fb.split("Putania's Purgatory").join("Petunia's Purgatory");
+          if (fa === fbTypoFixed) continue;
+          if (fa === `IFERROR(${fb},"")`) continue;
+          if (fa === `IFERROR(${fbTypoFixed},"")`) continue;
+        }
         deltas.push({ sheet: sheetBefore.name, cell: rowBefore.getCell(c).address, before: fb, after: fa });
       }
     }
