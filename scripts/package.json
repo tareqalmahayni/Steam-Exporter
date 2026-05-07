@@ -6,6 +6,7 @@
   "scripts": {
     "hello": "tsx ./src/hello.ts",
     "tracker:dry-run": "tsx ./src/tracker/cli.ts",
+    "debug:wishlist:colossus": "tsx ./src/debug/wishlistColossus.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {
