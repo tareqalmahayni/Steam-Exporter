@@ -9,6 +9,7 @@
     "debug:wishlist:colossus": "tsx ./src/debug/wishlistColossus.ts",
     "tracker:real-wishlist:colossus": "tsx ./src/tracker/realCli.ts",
     "tracker:real-wishlist:all-games": "tsx ./src/tracker/realCliAllGames.ts",
+    "tracker:current-pull:wishlist:all-games": "tsx ./src/tracker/realCliCurrentPullAllGames.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {

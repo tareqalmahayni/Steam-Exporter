@@ -240,6 +240,25 @@ async function main(): Promise<void> {
   const anyOk = perGame.some((g) => g.overallStatus === "REAL_DATA" || g.overallStatus === "TRUE_ZERO_FROM_STEAM");
   const finalStatus = allOk ? "PASSED" : (anyOk ? "PARTIAL" : "FAILED");
 
+  // Rich cache for downstream Pull-Data-Alone (M4B). Includes the full
+  // WishlistDayResult per game (parsed object, addsWindows/Mac/Linux,
+  // country/language presence flags, raw body). Saved alongside run.json so
+  // M4B can reuse without a second Steam round-trip.
+  const cachePath = path.join(targets.outputDir, "wishlist-pull-cache.json");
+  writeFileSync(cachePath, JSON.stringify({
+    version: 1,
+    writtenAt: new Date().toISOString(),
+    range: window,
+    games: perGame.map((g) => ({
+      id: g.game.id,
+      canonicalName: g.game.canonicalName,
+      wlSheet: g.game.wlSheet,
+      appid: g.appid,
+      overallStatus: g.overallStatus,
+      summary: g.summary,
+    })),
+  }, null, 2));
+
   writeFileSync(targets.runJson, JSON.stringify({
     milestone: "M4-real-wishlist-all-games",
     timestamp: new Date().toISOString(),

@@ -1,0 +1,199 @@
+Milestone 4 succeeded for all-games wishlist pulling.
+
+Before moving to UI, traffic, Electron, or Ask Tracker, add Milestone 4B: Pull Data Alone export mode.
+
+Important:
+Do not rebuild the full app yet.
+Do not build UI yet.
+Do not build Electron yet.
+Do not scrape dashboard traffic yet.
+Do not connect impressions or visits yet.
+Do not add Ask Tracker yet.
+Do not modify the original tracker.
+
+Goal:
+Create a clean standalone Excel workbook that contains only the data pulled by the app in the current run.
+
+This is different from the tracker-template output.
+
+We need two export modes eventually:
+
+1. Pull Data Alone
+- Clean standalone workbook
+- Only data from the selected pull/date range
+- No old manual tracker data
+- No historical rows outside selected range
+- No template placeholder zeros
+- Good for weekly reporting and verification
+
+2. Add to Master Tracker
+- Uses the existing tracker template
+- Preserves old historical/manual data
+- Updates a copied tracker workbook
+- Already mostly proven by Milestones 1 to 4
+
+For Milestone 4B, prioritize Pull Data Alone only.
+
+Use the same latest completed 7-day date range:
+2026-04-30 to 2026-05-06
+
+Use the same five games:
+
+Colossus - Eternal Blight: 1722800
+Fleetbreakers: 2929040
+Taival: 3152750
+Noor: 3728760
+Petunia's Purgatory: 4009450
+
+Do not include demos, playtests, supporter packs, or Tales of the Forgotten.
+
+Output filename:
+Steamworks_Current_Pull_Wishlist_AllGames_2026-05-07.xlsx
+
+Add a CLI command:
+
+pnpm --filter @workspace/scripts run tracker:current-pull:wishlist:all-games
+
+Important cost/control rule:
+If the data from the last Milestone 4 run is available in cache or run artifacts, reuse it instead of pulling Steam again.
+If cache is not safely available, then re-pull through the official API.
+
+The Current Pull Only workbook must include these sheets:
+
+1. Summary
+2. Validation
+3. Pull Log
+4. Raw_Wishlist_API
+5. Raw_Traffic
+6. Colossus - Eternal Blight
+7. Fleetbreakers
+8. Taival
+9. Noor
+10. Petunia's Purgatory
+
+Do not include:
+- Consolidated KPI
+- KPI by Quarter
+- Dashboard
+- Old _WL history from the master tracker
+- Old manual values
+- Old weekly columns
+- Historical tracker rows outside selected date range
+
+Each game sheet should include only the selected date range.
+
+Each game sheet structure:
+
+Section A: Overview
+- Game
+- AppID
+- Date range
+- Pull timestamp
+- Wishlist adds
+- Wishlist deletes
+- Wishlist purchases
+- Wishlist gifts
+- Net wishlist change
+- Status
+- Errors
+- Warnings
+
+Section B: Daily Wishlist Data
+- Date
+- Adds
+- Deletes
+- Purchases And Activations
+- Gifts
+- Windows Adds
+- Mac Adds
+- Linux Adds
+- Net Wishlist
+- Source
+- Status
+- Message
+
+Section C: Country Breakdown, if available
+- Date
+- Country Code
+- Country Name
+- Adds
+- Deletes
+- Purchases
+- Gifts
+- Net Wishlist
+
+Section D: Language Breakdown, if available
+- Date
+- Language
+- Adds
+- Deletes
+- Purchases
+- Gifts
+- Net Wishlist
+
+Section E: Traffic
+For this milestone, traffic is not pulled.
+Show:
+Traffic Data: NOT PULLED
+Reason: Traffic/impressions/visits are not part of Milestone 4B.
+
+Summary sheet columns:
+- Game
+- AppID
+- Date range
+- Wishlist adds
+- Wishlist deletes
+- Wishlist purchases
+- Wishlist gifts
+- Net wishlist change
+- Top country
+- Top language
+- Status
+- Errors
+- Warnings
+
+Validation sheet must include:
+- Export mode: Pull Data Alone
+- Pull timestamp
+- Selected games
+- Selected date range
+- API calls attempted
+- API calls successful
+- API calls failed
+- Games with real data
+- Games with true zero values
+- Games with failed pulls
+- Final status: PASSED or FAILED
+
+Important rules:
+- Do not include old manual tracker data.
+- Do not include old weeks/months outside selected range.
+- Do not include old dashboard values.
+- Do not include placeholder 0s from the template.
+- Do not write fake 0s.
+- 0 is allowed only when Steam returned true 0.
+- If a game/date failed, show the exact failure reason.
+- Do not block successful games because one game/date failed.
+- Fleetbreakers 2026-05-05 and 2026-05-06 should be shown as EMPTY_RESPONSE, not fake 0.
+- Do not show [object Object] anywhere in the workbook.
+- Avoid formulas where possible in Current Pull Only mode. Write calculated values directly so the file is clean and readable without recalculation.
+
+After building, run the command and report:
+
+1. Output path for Pull Data Alone workbook
+2. Whether it reused cache or re-pulled Steam
+3. Date range pulled
+4. Daily values per game
+5. Weekly totals per game
+6. API calls attempted
+7. API calls successful
+8. API calls failed
+9. Validation status
+10. Whether the workbook contains only pulled data and no old manual data
+11. Whether Fleetbreakers failed dates are marked EMPTY_RESPONSE
+12. Whether there are zero [object Object] cells
+13. Any errors or warnings
+
+Important:
+The Excel file is the product.
+Do not mark complete unless the Current Pull Only workbook visibly contains only the pulled Steam data and no old tracker history.
