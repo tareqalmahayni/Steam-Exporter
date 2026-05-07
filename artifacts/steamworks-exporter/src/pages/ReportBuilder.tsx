@@ -5,7 +5,7 @@
  *   1. Setup status   (STEAM_FINANCIAL_KEY ready / missing)
  *   2. Select games   (5 checkboxes + Select All)
  *   3. Choose data    (Wishlist / Traffic / Both)
- *   4. Date range     (Latest week / Custom; default 2026-04-30 → 2026-05-06)
+ *   4. Date range     (Today / Previous Week / Previous Month / Previous Year / Lifetime / Preference; defaults to Preference with rolling 7-day window ending today)
  *   5. Upload CSVs    (one per selected game; only when traffic is requested)
  *   6. Generate       (live progress log + auto-download)
  *
@@ -105,8 +105,10 @@ export function ReportBuilder() {
   const [dataType, setDataType] = useState<DataType>("both");
   const [trafficSource, setTrafficSource] = useState<TrafficSource>("steamworks");
   const [dateMode, setDateMode] = useState<DateMode>("preference");
-  const [startIso, setStartIso] = useState("2026-04-30");
-  const [endIso, setEndIso] = useState("2026-05-06");
+  // Preference defaults: dynamic rolling 7-day window ending today (runtime).
+  // No hardcoded dates — re-evaluated at every app open via lazy useState init.
+  const [startIso, setStartIso] = useState<string>(() => isoNDaysAgo(6));
+  const [endIso, setEndIso] = useState<string>(() => isoToday());
   const [trafficCsvs, setTrafficCsvs] = useState<Record<string, { fileName: string; text: string }>>({});
 
   const [busy, setBusy] = useState(false);

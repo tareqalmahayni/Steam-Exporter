@@ -1,0 +1,141 @@
+Patch only the Date Range UI and date calculation logic.
+
+Do not rebuild the app.
+Do not change the data engine.
+Do not change wishlist pulling.
+Do not change traffic pulling.
+Do not change Excel report layout.
+Do not change selected-games logic.
+Do not touch logo/branding yet.
+
+The Date Range dropdown must show only these 6 options:
+
+1. Today
+2. Previous Week
+3. Previous Month
+4. Previous Year
+5. Lifetime
+6. Preference
+
+Remove any other options.
+
+Date logic must be dynamic based on the real runtime current date.
+
+Do not hardcode any date.
+Do not hardcode 2026-05-07.
+Do not hardcode any test range.
+
+Today:
+Start = runtime current date
+End = runtime current date
+
+Previous Week:
+Rolling 7-day range.
+Start = runtime current date minus 6 days
+End = runtime current date
+
+Example:
+If runtime date is 2026-05-07:
+Start = 2026-05-01
+End = 2026-05-07
+
+If runtime date is 2026-05-08:
+Start = 2026-05-02
+End = 2026-05-08
+
+Previous Month:
+Rolling 30-day range.
+Start = runtime current date minus 29 days
+End = runtime current date
+
+Example:
+If runtime date is 2026-05-08:
+Start = 2026-04-09
+End = 2026-05-08
+
+Previous Year:
+Rolling 365-day range.
+Start = runtime current date minus 364 days
+End = runtime current date
+
+Example:
+If runtime date is 2026-05-08:
+Start = 2025-05-09
+End = 2026-05-08
+
+Lifetime:
+Start = trackingStartDate for the selected game
+End = runtime current date
+
+If trackingStartDate is missing for any selected game, block the run and show:
+MISSING_TRACKING_START_DATE
+
+Preference:
+Manual custom date range selected by the user.
+
+Important default behavior:
+
+Preference must be the default selected option when the app opens.
+
+Preference date fields must be visible by default.
+
+Default Preference start date:
+runtime current date minus 6 days
+
+Default Preference end date:
+runtime current date
+
+Examples:
+
+If runtime current date is 2026-05-07:
+Default Preference start = 2026-05-01
+Default Preference end = 2026-05-07
+
+If runtime current date is 2026-05-08:
+Default Preference start = 2026-05-02
+Default Preference end = 2026-05-08
+
+Important:
+This is only the default value inside Preference.
+The user can still manually edit Preference start and end dates.
+
+The app must calculate these dates dynamically every time:
+1. The app opens
+2. The user changes the date dropdown
+3. The user clicks Generate Report
+
+The UI must show clearly:
+Selected preset
+Runtime current date
+Calculated start date
+Calculated end date
+
+The generated Excel report must use exactly the visible calculated range.
+
+Traffic expected filenames must also update dynamically based on the selected start and end date, but only when fallback CSV mode is selected.
+
+Acceptance criteria:
+1. Date dropdown shows only Today, Previous Week, Previous Month, Previous Year, Lifetime, Preference.
+2. Preference is selected by default.
+3. Preference date fields are visible by default.
+4. Default Preference start date = runtime current date minus 6 days.
+5. Default Preference end date = runtime current date.
+6. User can manually edit Preference dates.
+7. Today is dynamic.
+8. Previous Week is dynamic.
+9. Previous Month is dynamic.
+10. Previous Year is dynamic.
+11. Lifetime uses trackingStartDate to runtime current date.
+12. No date preset uses a hardcoded test date.
+13. No hardcoded 2026-05-07 remains.
+14. The UI shows the exact start and end date before Generate Report.
+15. The generated report uses exactly the visible selected date range.
+
+After patching, report:
+1. Files changed
+2. Runtime current date used by the app
+3. Date dropdown options shown
+4. Default selected option
+5. Default Preference start/end dates
+6. Calculated start/end for each preset
+7. Confirmation that no hardcoded 2026-05-07 remains
