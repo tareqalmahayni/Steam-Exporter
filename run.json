@@ -1,0 +1,41 @@
+{
+  "timestamp": "2026-05-07T09:43:41.774Z",
+  "mode": "dry-run",
+  "range": {
+    "startIso": "2026-04-01",
+    "endIso": "2026-04-30",
+    "label": "previous-month (2026-04)"
+  },
+  "seed": "tracker-dry-run-v1",
+  "input": {
+    "path": "/home/runner/workspace/attached_assets/Tracker_Template_1778144249529.xlsx",
+    "sha256Before": "a6e4808b986025ff65d429c2daed1425929429c5ca311c195a82b4fe32970bf9",
+    "sha256After": "a6e4808b986025ff65d429c2daed1425929429c5ca311c195a82b4fe32970bf9",
+    "untouched": true
+  },
+  "output": {
+    "path": "/home/runner/workspace/.local/tracker-runs/2026-05-07T09-43-33-838Z/Steamworks_Tracker_DRY_RUN_2026-05-07.xlsx",
+    "sha256": "fde363271fe9ffcadf800dbaa1b09cb0b193de25d4d18e7b64e5f5359b77830a"
+  },
+  "counts": {
+    "writes": 333,
+    "skips": 590,
+    "blocks": 0
+  },
+  "formulaIntegrity": {
+    "ok": true,
+    "unexpectedChanges": []
+  },
+  "noor": {
+    "alreadyPresent": false,
+    "added": true
+  },
+  "typoFixCells": 8,
+  "touchedSheets": [
+    "KPI by Quarter",
+    "Consolidated KPI",
+    "Dashboard",
+    "Noor_WL"
+  ],
+  "consolidatedKpiPolicy": "formula-protected — no data cell writes; only typo-fix label cells touched"
+}
