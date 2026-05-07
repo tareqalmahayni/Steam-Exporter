@@ -1,0 +1,138 @@
+Milestone 2 passed.
+
+Final status was REAL_DATA for Colossus AppID 1722800 on 2026-05-06.
+
+Live Steam data returned:
+- wishlist_adds: 85
+- wishlist_deletes: 3
+- wishlist_purchases: 0
+- wishlist_gifts: 0
+- wishlist_adds_windows: 16
+- wishlist_adds_mac: 0
+- wishlist_adds_linux: 0
+- country_summary: present
+- language_summary: present
+
+Now build Milestone 3 only: connect real Steam wishlist API data to the safe tracker writer.
+
+Do not build the full UI yet.
+Do not build Electron yet.
+Do not scrape dashboard traffic yet.
+Do not connect impressions or visits yet.
+Do not modify the original tracker.
+
+Goal:
+Use the proven official Steam wishlist API to fill the copied tracker template with real wishlist data.
+
+Use the same safe tracker writer from Milestone 1.
+Use the official API debug logic from Milestone 2.
+Start with Colossus only.
+
+Input:
+- Tracker template
+- Colossus AppID 1722800
+- STEAM_FINANCIAL_KEY
+- Date range: latest week, using the latest completed Steam reporting date as the end date
+
+Output:
+Steamworks_Tracker_REAL_WISHLIST_Colossus_YYYY-MM-DD.xlsx
+
+Required behavior:
+
+1. Pull real daily wishlist data for Colossus for the latest completed 7-day reporting window.
+2. Write daily data into:
+   Colossus - Eternal Blight_WL
+
+3. Write or update the correct weekly wishlist net in the tracker where safe.
+4. Preserve existing manual historical values unless:
+   - the cell is blank, OR
+   - the selected range is being explicitly refreshed, OR
+   - forceRefresh=true
+
+5. Do not overwrite existing manual values with failed values.
+6. Do not write fake 0s.
+7. A 0 is allowed only when Steam returned true 0.
+8. If Steam returns wishlist_purchases: 0 or wishlist_gifts: 0, mark status as TRUE_ZERO_FROM_STEAM, not failed.
+9. Add/update Validation sheet.
+10. Add/update Pull Log sheet.
+11. Add/update Raw_Wishlist_API sheet with the raw parsed Steam rows.
+12. Keep Raw_Traffic empty or marked NOT PULLED because traffic is not part of this milestone.
+13. Do not touch impressions or visits yet.
+14. Dashboard formulas should remain clean with no #VALUE errors.
+15. Original tracker hash must remain unchanged.
+16. Formula integrity check must still pass.
+
+Add a CLI command:
+
+pnpm --filter @workspace/scripts run tracker:real-wishlist:colossus
+
+The command should:
+- Use Colossus AppID 1722800
+- Use latest completed 7-day range by default
+- Pull real wishlist API data
+- Update a copied tracker output
+- Save output under .local/tracker-runs/<timestamp>/
+- Generate changelog.jsonl
+- Generate changelog.md
+- Generate run.json
+
+Validation sheet must show:
+- REAL_DATA
+- Number of Steam API calls attempted
+- Number of Steam API calls successful
+- Number of Steam API calls failed
+- Dates pulled
+- Total adds
+- Total deletes
+- Total purchases
+- Total gifts
+- Total net wishlist change
+- True zero fields
+- Manual values preserved
+- Cells written
+- Cells skipped
+- Final status: PASSED or FAILED
+
+Pull Log must include each date pulled:
+Timestamp | Game | AppID | Date | Metric | Source | Status | Old Value | New Value | Message
+
+Raw_Wishlist_API must include:
+Date
+Game
+AppID
+Adds
+Deletes
+Purchases And Activations
+Gifts
+Windows Adds
+Mac Adds
+Linux Adds
+Net Wishlist
+Country Summary Present
+Language Summary Present
+Source
+Status
+Message
+
+After building, run the command and report:
+
+1. Files changed
+2. Output workbook path
+3. Change log path
+4. Date range pulled
+5. Daily wishlist values pulled
+6. Total net wishlist change for the week
+7. Cells written
+8. Manual values preserved
+9. Original tracker hash before and after
+10. Formula integrity result
+11. Dashboard #VALUE result
+12. Validation status
+13. Whether Raw_Wishlist_API was populated
+14. Whether Colossus_WL was populated with real data
+15. Whether Consolidated KPI and KPI by Quarter reflected the Colossus real data safely
+16. Any errors or warnings
+
+Important:
+The Excel file is the product.
+Do not mark complete unless the exported workbook visibly contains real Colossus wishlist data.

@@ -14,6 +14,9 @@ export interface WriteRequest {
   metric: string;
   dateOrWeek: string;
   forceRefresh: boolean;
+  /** Real-data path: a numeric 0 IS allowed because Steam reported a true zero.
+   *  Default false (mock-pull keeps the conservative behavior). */
+  allowRealZero?: boolean;
 }
 
 export function attemptWrite(req: WriteRequest): ChangeEntry {
@@ -30,7 +33,7 @@ export function attemptWrite(req: WriteRequest): ChangeEntry {
       return entry("skip-na", `incoming string is empty/n-a/dash ("${t}")`, req, oldRaw, req.newValue);
     }
   }
-  if (typeof req.newValue === "number" && req.newValue === 0) {
+  if (typeof req.newValue === "number" && req.newValue === 0 && !req.allowRealZero) {
     return entry("skip-zero", "incoming number is 0", req, oldRaw, req.newValue);
   }
 
