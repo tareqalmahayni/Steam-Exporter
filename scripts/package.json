@@ -11,6 +11,7 @@
     "tracker:real-wishlist:all-games": "tsx ./src/tracker/realCliAllGames.ts",
     "tracker:current-pull:wishlist:all-games": "tsx ./src/tracker/realCliCurrentPullAllGames.ts",
     "tracker:current-pull:traffic-csv": "tsx ./src/traffic/trafficCurrentPullCli.ts",
+    "tracker:current-pull:traffic-csv:all-games": "tsx ./src/traffic/trafficCurrentPullAllGamesCli.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {

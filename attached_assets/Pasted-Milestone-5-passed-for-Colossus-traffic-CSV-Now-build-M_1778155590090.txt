@@ -1,0 +1,70 @@
+Milestone 5 passed for Colossus traffic CSV.
+
+Now build Milestone 5B: Traffic CSV import for all five games.
+
+Do not build UI yet.
+Do not build Electron yet.
+Do not scrape Steamworks dashboard yet.
+Do not add Ask Tracker yet.
+Do not modify the original tracker.
+Do not connect wishlist again yet.
+
+Use the proven traffic CSV parser from Milestone 5.
+
+Input folder:
+.local/input/traffic/
+
+Expected files:
+traffic_colossus_1722800_20260430_20260506.csv
+traffic_fleetbreakers_2929040_20260430_20260506.csv
+traffic_taival_3152750_20260430_20260506.csv
+traffic_noor_3728760_20260430_20260506.csv
+traffic_petunia_4009450_20260430_20260506.csv
+
+Output:
+Steamworks_Current_Pull_Traffic_AllGames_2026-05-07.xlsx
+
+Workbook sheets:
+1. Summary
+2. Validation
+3. Pull Log
+4. Raw_Traffic
+5. Colossus - Eternal Blight
+6. Fleetbreakers
+7. Taival
+8. Noor
+9. Petunia's Purgatory
+
+Rules:
+- Use AppID and date range from filenames.
+- Validate each AppID against the five-game allowlist.
+- Strip BOM.
+- Use the RFC-4180 parser already built.
+- Separate Page/Source rows from Country rows.
+- Do not double-count Country rows.
+- Keep Bot Traffic flagged.
+- Keep Owner Impressions and Owner Visits separate.
+- Do not write fake 0s.
+- 0 is allowed only if CSV explicitly contains 0.
+- Missing values should be NOT AVAILABLE.
+- If a file is missing, mark that game as TRAFFIC_CSV_MISSING instead of faking 0.
+- Do not include wishlist data yet.
+- Do not include old tracker history.
+- Do not include Dashboard, Consolidated KPI, or KPI by Quarter.
+
+After building, run the command and report:
+1. Output workbook path
+2. Files parsed
+3. Files missing
+4. Rows parsed per game
+5. Page/source rows per game
+6. Country rows per game
+7. Invalid rows per game
+8. Public impressions per game
+9. Public visits per game
+10. CTR per game
+11. Owner impressions and owner visits per game
+12. Bot traffic per game
+13. Whether country rows were separated and not double-counted
+14. Whether Validation says PASSED or FAILED
+15. Any warnings or errors
