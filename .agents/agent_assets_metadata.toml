@@ -1,0 +1,20 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "OEzzHY7zyyTBgdU6VKfIl"
+uri = "file://.local/tracker-runs/2026-05-07T10-07-30-836Z/Steamworks_Tracker_DRY_RUN_2026-05-07.xlsx"
+type = "table"
+title = "Steamworks_Tracker_DRY_RUN_2026-05-07.xlsx (Dashboard #VALUE! safety net applied)"
+
+[[outputs]]
+id = "o7rijpRT5USHlrpJVmqQ9"
+uri = "file://.local/tracker-runs/2026-05-07T10-07-30-836Z/changelog.md"
+type = "text"
+title = "Change log (markdown)"
+
+[[outputs]]
+id = "RPt12pg_eHtqelyu8H4oj"
+uri = "file://.local/tracker-runs/2026-05-07T10-07-30-836Z/run.json"
+type = "unspecified"
+title = "Run metadata"
