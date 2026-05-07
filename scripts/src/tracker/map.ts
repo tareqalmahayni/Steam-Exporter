@@ -92,6 +92,16 @@ export const GAMES: Record<Exclude<GameId, "noor">, GameMap> = {
   },
 };
 
+/** Steam AppIDs for the five main games, per Milestone 4. Demos, playtests,
+ *  supporter packs, and "Tales of the Forgotten" are intentionally NOT here. */
+export const APP_IDS: Record<GameId, string> = {
+  colossus: "1722800",
+  fleet: "2929040",
+  taival: "3152750",
+  noor: "3728760",
+  petunia: "4009450",
+};
+
 /** Sheets we expect to find when validating the input workbook. */
 export const REQUIRED_SHEETS = [
   "Consolidated KPI",

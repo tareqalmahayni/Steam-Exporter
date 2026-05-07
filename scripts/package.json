@@ -8,6 +8,7 @@
     "tracker:dry-run": "tsx ./src/tracker/cli.ts",
     "debug:wishlist:colossus": "tsx ./src/debug/wishlistColossus.ts",
     "tracker:real-wishlist:colossus": "tsx ./src/tracker/realCli.ts",
+    "tracker:real-wishlist:all-games": "tsx ./src/tracker/realCliAllGames.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {

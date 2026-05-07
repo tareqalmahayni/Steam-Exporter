@@ -1,0 +1,93 @@
+{
+  "milestone": "M3-real-wishlist-colossus",
+  "timestamp": "2026-05-07T10:46:22.264Z",
+  "appid": "1722800",
+  "game": "Colossus - Eternal Blight",
+  "range": {
+    "startIso": "2026-04-30",
+    "endIso": "2026-05-06",
+    "label": "latest-completed-7-day (2026-04-30 → 2026-05-06)"
+  },
+  "keyPresent": true,
+  "input": {
+    "path": "/home/runner/workspace/attached_assets/Tracker_Template_1778144249529.xlsx",
+    "sha256Before": "a6e4808b986025ff65d429c2daed1425929429c5ca311c195a82b4fe32970bf9",
+    "sha256After": "a6e4808b986025ff65d429c2daed1425929429c5ca311c195a82b4fe32970bf9",
+    "untouched": true
+  },
+  "output": {
+    "path": "/home/runner/workspace/.local/tracker-runs/2026-05-07T10-45-54-616Z/Steamworks_Tracker_REAL_WISHLIST_Colossus_2026-05-07.xlsx",
+    "sha256": "2bb1247fed327d7eb271a0d2857b4c10b47874ec66ce0d037181cb29abcd513e"
+  },
+  "steam": {
+    "attempted": 7,
+    "succeeded": 7,
+    "failed": 0,
+    "perDateStatuses": [
+      {
+        "date": "2026-04-30",
+        "status": "REAL_DATA",
+        "http": 200,
+        "message": "OK"
+      },
+      {
+        "date": "2026-05-01",
+        "status": "REAL_DATA",
+        "http": 200,
+        "message": "OK"
+      },
+      {
+        "date": "2026-05-02",
+        "status": "REAL_DATA",
+        "http": 200,
+        "message": "OK"
+      },
+      {
+        "date": "2026-05-03",
+        "status": "REAL_DATA",
+        "http": 200,
+        "message": "OK"
+      },
+      {
+        "date": "2026-05-04",
+        "status": "REAL_DATA",
+        "http": 200,
+        "message": "OK"
+      },
+      {
+        "date": "2026-05-05",
+        "status": "REAL_DATA",
+        "http": 200,
+        "message": "OK"
+      },
+      {
+        "date": "2026-05-06",
+        "status": "REAL_DATA",
+        "http": 200,
+        "message": "OK"
+      }
+    ]
+  },
+  "totals": {
+    "adds": 321,
+    "deletes": 23,
+    "purchases": 0,
+    "gifts": 0,
+    "net": 298,
+    "trueZeroFields": 25
+  },
+  "writes": {
+    "writes": 28,
+    "skips": 0,
+    "preserved": 0
+  },
+  "formulaIntegrity": {
+    "ok": true,
+    "unexpectedChanges": []
+  },
+  "dashboardGuard": {
+    "formulasWrapped": 259,
+    "fullCalcOnLoad": true
+  },
+  "finalStatus": "PASSED"
+}

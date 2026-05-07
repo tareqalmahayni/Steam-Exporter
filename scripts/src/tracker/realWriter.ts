@@ -16,16 +16,31 @@
 //      is set in the CLI).
 
 import type { Workbook, Worksheet } from "exceljs";
-import { GAMES } from "./map.js";
+import { GAMES, type GameMap } from "./map.js";
 import { attemptWrite } from "./cellOps.js";
 import type { ChangeEntry } from "./changelog.js";
 import type { WishlistDayResult } from "../realPull/steamWishlist.js";
 
+/** Back-compat shim for the M3 Colossus-only CLI. */
 export function applyRealWishlistColossus(
   wb: Workbook,
   daily: WishlistDayResult[],
 ): ChangeEntry[] {
-  const game = GAMES.colossus;
+  return applyRealWishlistForGame(wb, GAMES.colossus, daily);
+}
+
+/** Generic per-game wishlist writer (Milestone 4).
+ *  Same safety guarantees as the Colossus path:
+ *    - allowRealZero=true so Steam-reported zeros are written, not skipped
+ *    - failed-status days NEVER touch existing cells
+ *    - successful days refresh in place (the explicit pull range IS the
+ *      refresh range, per the spec's "selected range is being explicitly
+ *      refreshed" exception to manual-value preservation) */
+export function applyRealWishlistForGame(
+  wb: Workbook,
+  game: GameMap,
+  daily: WishlistDayResult[],
+): ChangeEntry[] {
   const wl = wb.getWorksheet(game.wlSheet);
   const out: ChangeEntry[] = [];
   if (!wl) {

@@ -1,0 +1,94 @@
+Milestone 3 is complete.
+
+Milestone 4: expand real wishlist pulling from Colossus only to all five main games.
+
+Do not build the UI yet.
+Do not build Electron yet.
+Do not scrape Steamworks dashboard yet.
+Do not connect impressions or visits yet.
+Do not add Ask Tracker yet.
+Do not modify the original tracker.
+
+Goal:
+Use the proven official Steam wishlist API to pull real latest-week wishlist data for all five main games and write it safely into a copied tracker workbook.
+
+Main games and AppIDs:
+
+Colossus - Eternal Blight: 1722800
+Fleetbreakers: 2929040
+Taival: 3152750
+Noor: 3728760
+Petunia's Purgatory: 4009450
+
+Do not include demos, playtests, supporter packs, or Tales of the Forgotten.
+
+Use:
+STEAM_FINANCIAL_KEY
+
+Date range:
+latest completed 7-day Steam reporting window
+
+Output:
+Steamworks_Tracker_REAL_WISHLIST_AllGames_YYYY-MM-DD.xlsx
+
+Required behavior:
+
+1. Pull real daily wishlist data for each of the five games.
+2. Write daily data into each game’s _WL sheet:
+   - Colossus - Eternal Blight_WL
+   - Fleetbreakers_WL
+   - Taival_WL
+   - Noor_WL
+   - Petunia's Purgatory_WL
+
+3. Create Noor_WL safely if missing.
+4. Keep Petunia's Purgatory as the visible name. Keep Putania only as an internal alias if needed.
+5. Preserve manual historical values unless the selected range is explicitly being refreshed.
+6. Do not overwrite existing values with failed pulls.
+7. Do not write fake 0s or n/a.
+8. A 0 is allowed only when Steam returned true 0.
+9. If a game fails, mark that game clearly with:
+   - REAL_DATA
+   - TRUE_ZERO_FROM_STEAM
+   - EMPTY_RESPONSE
+   - PERMISSION_ERROR
+   - APP_NOT_ACCESSIBLE
+   - API_ERROR
+
+10. Do not block successful games because one game failed.
+11. Add/update Validation sheet.
+12. Add/update Pull Log sheet.
+13. Add/update Raw_Wishlist_API with all games.
+14. Keep Raw_Traffic empty or NOT PULLED because traffic is not part of this milestone.
+15. Do not touch impressions or visits.
+16. Dashboard must have zero visible #VALUE errors.
+17. Original tracker hash must remain unchanged.
+18. Formula integrity check must pass.
+
+Add CLI command:
+
+pnpm --filter @workspace/scripts run tracker:real-wishlist:all-games
+
+After building, run the command and report:
+
+1. Output workbook path
+2. Change log path
+3. Date range pulled
+4. Daily wishlist values pulled per game
+5. Total net wishlist change per game
+6. API calls attempted
+7. API calls successful
+8. API calls failed
+9. Cells written
+10. Manual values preserved
+11. Original tracker hash before and after
+12. Formula integrity result
+13. Dashboard #VALUE result
+14. Validation status
+15. Whether Raw_Wishlist_API was populated for all games
+16. Whether each _WL sheet was populated or clearly marked with an error
+17. Any errors or warnings
+
+Important:
+The Excel file is the product.
+Do not mark complete unless the exported workbook visibly contains real wishlist data for the games that Steam returned data for.
