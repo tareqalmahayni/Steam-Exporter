@@ -1,0 +1,49 @@
+Steamworks login works, but the Exporter app does not detect it.
+
+Current behavior:
+- Electron opens the Steamworks login/session window.
+- I successfully log into Steamworks.
+- The Steamworks dashboard is visible inside the Electron window.
+- I can see my publisher account: Level Up Gaming Company.
+- But the main Steamworks Exporter window still says:
+  Waiting for sign-in...
+
+So the issue is not login.
+The issue is login/session detection.
+
+Please fix the Electron login detection.
+
+Requirements:
+1. If the Steamworks login window reaches an authenticated Steamworks dashboard page, the main app should mark the user as signed in.
+2. Check cookies from the correct Electron partition:
+   persist:steamworks
+3. Check the correct domains:
+   partner.steamgames.com
+   partner.steampowered.com
+   steamcommunity.com
+   steampowered.com
+4. Do not require only one exact cookie if Steamworks uses multiple auth cookies.
+5. Detect at minimum:
+   - sessionid on partner.steamgames.com or partner.steampowered.com
+   - steamLoginSecure or equivalent authenticated Steam cookie if available
+6. Add a manual button:
+   “I am signed in, validate session”
+   This should re-check the cookies/session and mark signed in if valid.
+7. If cookie detection fails, log only cookie names/domains/presence flags.
+   Do not log cookie values.
+8. If signed in is detected, close or hide the login window and show the main exporter UI.
+9. Do not change wishlist logic.
+10. Do not change traffic logic.
+11. Do not change Excel writer.
+12. Do not change date logic.
+
+Also add a fallback validation method:
+- Make a lightweight authenticated request to Steamworks dashboard or the selected app page.
+- If the response contains evidence of the logged-in publisher dashboard, mark session as signed in.
+- If not authenticated, show STEAMWORKS_LOGIN_REQUIRED.
+
+Acceptance criteria:
+1. After I log in and see the Steamworks dashboard, the main app changes from Waiting for sign-in to Signed in.
+2. The main exporter UI becomes available.
+3. The app can then use the same authenticated session for Pull Traffic from Steamworks.
+4. No cookies or session values are printed.

@@ -27,6 +27,14 @@ function isFullCreds(c: Credentials): boolean {
   return !!(c.sessionid && c.steamLoginSecure && c.partnerSessionid && c.partnerSteamLoginSecure);
 }
 
+// "Usable" = the steamgames pair is present. The backend's testConnection
+// + fetchPartnerHtml replicate the JWT-refresh hop server-side, so the
+// partner.steampowered.com pair is optional — requiring all four was the
+// original cause of the "Waiting for sign-in…" hang the user reported.
+function hasUsableCreds(c: Credentials): boolean {
+  return !!(c.sessionid && c.steamLoginSecure);
+}
+
 export function DesktopApp() {
   const [credentials, setCredentials] = useState<Credentials>(EMPTY);
   const [publisherName, setPublisherName] = useState<string | null>(null);
@@ -75,7 +83,7 @@ export function DesktopApp() {
     (async () => {
       try {
         const stored = await window.desktop!.getStoredSteamCookies();
-        if (stored && isFullCreds(stored)) {
+        if (stored && hasUsableCreds(stored)) {
           setCredentials(stored);
         }
       } finally {
@@ -86,7 +94,7 @@ export function DesktopApp() {
 
   useEffect(() => {
     if (
-      isFullCreds(credentials) &&
+      hasUsableCreds(credentials) &&
       !publisherName &&
       !testConn.isPending
     ) {
@@ -102,10 +110,12 @@ export function DesktopApp() {
     try {
       const result = await window.desktop.loginToSteam();
       if ("cancelled" in result) {
-        setLoginError("Login window was closed before sign-in completed.");
-      } else if (!isFullCreds(result)) {
         setLoginError(
-          "Signed in, but Steam didn't issue cookies for both partner.steamgames.com and partner.steampowered.com. Try opening both pages in the login window before closing it."
+          "Login window was closed before sign-in was auto-detected. If you actually signed in, click \"I'm signed in, validate session\" below."
+        );
+      } else if (!hasUsableCreds(result)) {
+        setLoginError(
+          "Steam didn't issue session cookies. Sign in again, or use \"I'm signed in, validate session\" if the dashboard is visible."
         );
       } else {
         setCredentials(result);
@@ -114,6 +124,31 @@ export function DesktopApp() {
       setLoginError((e as Error).message ?? "Login failed");
     } finally {
       setLoginPending(false);
+    }
+  };
+
+  // Manual escape hatch: user reports the login window shows the Steamworks
+  // dashboard but the main app still says "Waiting for sign-in…". Re-read
+  // cookies from the persistent partition (no values logged or surfaced) and
+  // hand them to the existing testConnection path.
+  const [validatePending, setValidatePending] = useState(false);
+  const handleValidateSession = async () => {
+    if (!window.desktop) return;
+    setValidatePending(true);
+    setLoginError(null);
+    try {
+      const stored = await window.desktop.getStoredSteamCookies();
+      if (!stored || !hasUsableCreds(stored)) {
+        setLoginError(
+          "STEAMWORKS_LOGIN_REQUIRED — no Steamworks session cookies found in the embedded browser. Click \"Open Steam login\" and sign in first."
+        );
+        return;
+      }
+      setCredentials(stored); // triggers testConn useEffect
+    } catch (e) {
+      setLoginError((e as Error).message ?? "Validation failed");
+    } finally {
+      setValidatePending(false);
     }
   };
 
@@ -243,6 +278,25 @@ export function DesktopApp() {
                     {loginError}
                   </AlertDescription>
                 </Alert>
+              )}
+
+              {!showAutoLoginSpinner && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleValidateSession}
+                  disabled={validatePending || testConn.isPending || loginPending}
+                  className="min-w-[260px]"
+                  data-testid="button-validate-session"
+                >
+                  {validatePending || testConn.isPending ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Validating session…
+                    </>
+                  ) : (
+                    "I'm signed in, validate session"
+                  )}
+                </Button>
               )}
 
               {!showAutoLoginSpinner && !fallbackOpen && (

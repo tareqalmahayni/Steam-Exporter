@@ -141,13 +141,29 @@ const COOKIE_DOMAINS = [
 ] as const;
 
 function pickCookie(cookies: Electron.Cookie[], domain: string, name: string): string {
-  // Prefer exact-domain match; fall back to any matching name.
+  // Tier 1: exact-host match (e.g. cookie.domain === "partner.steamgames.com").
   const exact = cookies.find(
-    (c) =>
-      c.name === name &&
-      (c.domain === domain || c.domain === `.${domain}`)
+    (c) => c.name === name && (c.domain === domain || c.domain === `.${domain}`)
   );
   if (exact) return exact.value;
+
+  // Tier 2: parent-domain match. Steam sometimes scopes the partner cookies
+  // to ".steamgames.com" / ".steampowered.com" (broader than partner.*) — those
+  // are still valid for partner.* requests, the strict equality above would
+  // miss them, and we'd incorrectly conclude "not signed in".
+  const parents: string[] = [];
+  const parts = domain.split(".");
+  for (let i = 1; i < parts.length - 1; i++) {
+    parents.push(parts.slice(i).join("."));
+  }
+  for (const parent of parents) {
+    const wider = cookies.find(
+      (c) => c.name === name && (c.domain === parent || c.domain === `.${parent}`)
+    );
+    if (wider) return wider.value;
+  }
+
+  // Tier 3: any cookie with the right name in the partition. Last resort.
   return cookies.find((c) => c.name === name)?.value ?? "";
 }
 
@@ -278,9 +294,17 @@ ipcMain.handle("desktop:loginToSteam", async () => {
       if (/\/login(\?|\/|$)/.test(url)) return false;
       if (url.includes("openid")) return false;
       if (url.includes("login.steampowered.com")) return false;
+      // Steam's federated login bounces through several auth domains before
+      // landing back on partner.*. Any of these (with cookies present) is a
+      // strong "user is signed in" signal — gating on partner.* alone caused
+      // the "Waiting for sign-in…" hang reported in the field.
       return (
         url.includes("partner.steamgames.com") ||
-        url.includes("partner.steampowered.com")
+        url.includes("partner.steampowered.com") ||
+        url.includes("steamcommunity.com") ||
+        url.includes("store.steampowered.com") ||
+        url.includes("checkout.steampowered.com") ||
+        url.includes("help.steampowered.com")
       );
     };
 
@@ -349,7 +373,7 @@ ipcMain.handle("desktop:loginToSteam", async () => {
     // Belt-and-braces poll. Some cookie writes happen via `Set-Cookie` on
     // navigations that the cookies-changed event coverage has occasionally
     // missed in the wild. Cheap to run.
-    const pollHandle = setInterval(() => void tryComplete("poll"), 1500);
+    const pollHandle = setInterval(() => void tryComplete("poll"), 750);
 
     const cleanup = () => {
       clearInterval(pollHandle);
