@@ -18,6 +18,8 @@ export const PullRequestGranularity = {
   monthly: "monthly",
   lifetime: "lifetime",
   today: "today",
+  preference: "preference",
+  "previous-week": "previous-week",
   "previous-month": "previous-month",
   "previous-year": "previous-year",
   custom: "custom",

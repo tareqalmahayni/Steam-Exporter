@@ -187,6 +187,7 @@ export function StepPickGames({
   }
 
   const dateRanges: { id: PullRequestGranularity; label: string; desc: string }[] = [
+    { id: "preference" as PullRequestGranularity, label: "Preference", desc: "Rolling last 7 days (default)" },
     { id: "today" as PullRequestGranularity, label: "Today", desc: "Just today" },
     { id: "previous-month" as PullRequestGranularity, label: "Previous Month", desc: "Last calendar month" },
     { id: "previous-year" as PullRequestGranularity, label: "Previous Year", desc: "Last calendar year" },
@@ -334,7 +335,7 @@ export function StepPickGames({
           <RadioGroup
             value={granularity}
             onValueChange={(val) => setGranularity(val as PullRequestGranularity)}
-            className="grid grid-cols-2 md:grid-cols-5 gap-3"
+            className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3"
           >
             {dateRanges.map((range) => (
               <div key={range.id}>

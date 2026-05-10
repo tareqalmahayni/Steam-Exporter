@@ -3,15 +3,60 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Download, AlertCircle, FileDown, RefreshCw, XCircle, LogIn } from "lucide-react";
-import { 
-  useStartPull, 
-  useGetPullStatus, 
-  getGetPullStatusQueryKey, 
+import { Download, AlertCircle, FileDown, RefreshCw, XCircle, LogIn, ShieldCheck, Loader2 } from "lucide-react";
+import {
+  useStartPull,
+  useGetPullStatus,
+  getGetPullStatusQueryKey,
   useCancelPull,
+  usePreflightConnection,
   type PullRequestGranularity
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
+
+/**
+ * Mirror of server getDateRangeIso for granularities the user can pick.
+ * Used so the header + preview can show "May 4 → May 10" instead of just
+ * the granularity name. Keep in sync with artifacts/api-server/src/lib/steamworks.ts.
+ */
+function computeDateRange(
+  granularity: PullRequestGranularity,
+  customStartIso?: string,
+  customEndIso?: string,
+): { startIso: string; endIso: string } {
+  if (granularity === ("custom" as PullRequestGranularity) && customStartIso && customEndIso) {
+    return { startIso: customStartIso, endIso: customEndIso };
+  }
+  const now = new Date();
+  const fmt = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  let start = new Date(now);
+  let end = new Date(now);
+  const g = granularity as string;
+  if (g === "weekly") start.setDate(now.getDate() - 7);
+  else if (g === "monthly") start.setDate(now.getDate() - 30);
+  else if (g === "yearly" || g === "previous-year") {
+    start = new Date(now.getFullYear() - 1, 0, 1);
+    end = new Date(now.getFullYear() - 1, 11, 31);
+  } else if (g === "previous-month") {
+    start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    end = new Date(now.getFullYear(), now.getMonth(), 0);
+  } else if (g === "today") {
+    start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  } else if (g === "preference" || g === "previous-week") {
+    start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6);
+  } else if (g === "lifetime") {
+    start.setFullYear(2003, 0, 1);
+  }
+  return { startIso: fmt(start), endIso: fmt(end) };
+}
+
+function formatRangeHuman(startIso: string, endIso: string): string {
+  const opts: Intl.DateTimeFormatOptions = { month: "short", day: "numeric", year: "numeric" };
+  const fmt = (iso: string) =>
+    new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, opts);
+  return startIso === endIso ? fmt(startIso) : `${fmt(startIso)} → ${fmt(endIso)}`;
+}
 
 interface StepPullProps {
   credentials: { sessionid: string; steamLoginSecure: string; partnerSessionid: string; partnerSteamLoginSecure: string };
@@ -24,7 +69,14 @@ interface StepPullProps {
 
 export function StepPull({ credentials, selectedGames, granularity, customStartIso, customEndIso, onReset }: StepPullProps) {
   const [jobId, setJobId] = useState<string | null>(null);
+  const [preflightError, setPreflightError] = useState<{
+    status: string;
+    message: string;
+  } | null>(null);
   const queryClient = useQueryClient();
+
+  const computedRange = computeDateRange(granularity, customStartIso, customEndIso);
+  const humanRange = formatRangeHuman(computedRange.startIso, computedRange.endIso);
 
   const startPull = useStartPull({
     mutation: {
@@ -34,6 +86,7 @@ export function StepPull({ credentials, selectedGames, granularity, customStartI
     }
   });
 
+  const preflight = usePreflightConnection();
   const cancelPull = useCancelPull();
 
   const { data: statusData } = useGetPullStatus(jobId || "", {
@@ -54,11 +107,36 @@ export function StepPull({ credentials, selectedGames, granularity, customStartI
     }
   }, [statusData?.status, jobId]);
 
-  const handleStart = () => {
+  const handleStart = async () => {
     if (jobId) {
       setJobId(null);
       queryClient.removeQueries({ queryKey: getGetPullStatusQueryKey(jobId) });
     }
+    setPreflightError(null);
+
+    // PREFLIGHT — validate session against the actual per-game traffic page
+    // before we kick off a long pull job. Surfaces:
+    //   STEAMWORKS_LOGIN_REQUIRED / STEAMWORKS_SESSION_EXPIRED / TRAFFIC_PAGE_ACCESS_DENIED
+    if (selectedGames.length === 0) return;
+    try {
+      const result = await preflight.mutateAsync({
+        data: { ...credentials, appId: selectedGames[0]! },
+      });
+      if (!result.ok) {
+        setPreflightError({
+          status: result.status,
+          message: result.message || "Steamworks session check failed.",
+        });
+        return;
+      }
+    } catch (e) {
+      setPreflightError({
+        status: "TRAFFIC_DOWNLOAD_FAILED",
+        message: (e as Error).message || "Could not validate session.",
+      });
+      return;
+    }
+
     startPull.mutate({
       data: {
         ...credentials,
@@ -98,21 +176,61 @@ export function StepPull({ credentials, selectedGames, granularity, customStartI
     <Card className="w-full bg-card border-card-border shadow-lg animate-in fade-in slide-in-from-bottom-4">
       <CardHeader>
         <CardTitle className="text-xl">3. Export Data</CardTitle>
-        <CardDescription>Pulling {selectedGames.length} games at {granularity} granularity.</CardDescription>
+        <CardDescription data-testid="text-pull-summary">
+          Pulling <span className="font-semibold text-foreground">{selectedGames.length}</span>{" "}
+          game{selectedGames.length === 1 ? "" : "s"} for{" "}
+          <span className="font-semibold text-foreground">{humanRange}</span>{" "}
+          <span className="text-muted-foreground/70">
+            ({computedRange.startIso} → {computedRange.endIso})
+          </span>
+          .
+        </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
 
         {!jobId || isCancelled ? (
           <div className="flex flex-col items-center justify-center py-6 space-y-4">
-            <Button size="lg" className="w-full max-w-sm h-14 text-lg font-bold" onClick={handleStart} disabled={selectedGames.length === 0}>
-              <Download className="mr-2 h-5 w-5" />
-              Pull Data to Excel
+            <Button
+              size="lg"
+              className="w-full max-w-sm h-14 text-lg font-bold"
+              onClick={handleStart}
+              disabled={selectedGames.length === 0 || preflight.isPending}
+              data-testid="button-pull-start"
+            >
+              {preflight.isPending ? (
+                <><Loader2 className="mr-2 h-5 w-5 animate-spin" /> Validating Steamworks session…</>
+              ) : (
+                <><Download className="mr-2 h-5 w-5" /> Pull Data to Excel</>
+              )}
             </Button>
             {selectedGames.length === 0 && (
               <p className="text-sm text-muted-foreground">Select at least one game to pull data.</p>
             )}
             {isCancelled && (
               <p className="text-sm text-muted-foreground">Pull was cancelled. You can start again.</p>
+            )}
+            {preflightError && (
+              <Alert variant="destructive" className="bg-destructive/10 border-destructive/30 text-destructive max-w-md text-left" data-testid="alert-preflight-failed">
+                <AlertCircle className="h-4 w-4" />
+                <AlertTitle className="font-mono text-xs">{preflightError.status}</AlertTitle>
+                <AlertDescription className="mt-2 space-y-3">
+                  <p className="text-sm">{preflightError.message}</p>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="border-destructive/30 hover:bg-destructive/20 text-destructive"
+                    onClick={onReset}
+                    data-testid="button-preflight-reauth"
+                  >
+                    <LogIn className="mr-2 h-4 w-4" /> Sign in to Steam again
+                  </Button>
+                </AlertDescription>
+              </Alert>
+            )}
+            {!preflightError && !preflight.isPending && selectedGames.length > 0 && (
+              <p className="text-xs text-muted-foreground flex items-center gap-1.5">
+                <ShieldCheck className="h-3.5 w-3.5" /> Session will be validated against {selectedGames.length === 1 ? "your" : "the first"} game's stats page before the pull starts.
+              </p>
             )}
           </div>
         ) : (
@@ -167,12 +285,18 @@ export function StepPull({ credentials, selectedGames, granularity, customStartI
             )}
 
             {isSessionExpired && (
-              <Alert variant="destructive" className="bg-destructive/10 border-destructive/20 text-destructive">
+              <Alert variant="destructive" className="bg-destructive/10 border-destructive/20 text-destructive" data-testid="alert-session-expired">
                 <AlertCircle className="h-4 w-4" />
-                <AlertTitle>Steam session expired</AlertTitle>
+                <AlertTitle className="font-mono text-xs">STEAMWORKS_SESSION_EXPIRED</AlertTitle>
                 <AlertDescription className="mt-2 flex flex-col space-y-3">
-                  <p>Your saved Steam session expired mid-pull. Sign back in to continue.</p>
-                  <div>
+                  <p>
+                    Your Steam session expired during the pull
+                    {progressObj
+                      ? ` (failed at game ${progressObj.gameIndex + 1} of ${progressObj.totalGames}: ${progressObj.gameName})`
+                      : ""}
+                    . Re-sign in to Steam, then return here and click Pull Fresh — your game selection and date range are preserved.
+                  </p>
+                  <div className="flex gap-3">
                     <Button
                       size="sm"
                       variant="outline"
@@ -181,6 +305,15 @@ export function StepPull({ credentials, selectedGames, granularity, customStartI
                       data-testid="button-sign-in-again"
                     >
                       <LogIn className="mr-2 h-4 w-4" /> Sign in to Steam again
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="border-destructive/30 hover:bg-destructive/20 text-destructive"
+                      onClick={handleStart}
+                      data-testid="button-retry-after-reauth"
+                    >
+                      <RefreshCw className="mr-2 h-4 w-4" /> Retry pull
                     </Button>
                   </div>
                 </AlertDescription>

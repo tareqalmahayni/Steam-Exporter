@@ -46,6 +46,42 @@ export const TestConnectionResponse = zod.object({
 });
 
 /**
+ * Stronger than /connection/test — does not just verify the home page,
+but also fetches the per-game traffic page for one selected appId
+to confirm the session has access to the data we'll actually pull.
+Use this immediately before /pull/start.
+
+ * @summary Validate Steamworks session against an actual traffic page
+ */
+export const PreflightConnectionBody = zod.object({
+  sessionid: zod.string(),
+  steamLoginSecure: zod.string(),
+  partnerSessionid: zod.string(),
+  partnerSteamLoginSecure: zod.string(),
+  appId: zod
+    .number()
+    .describe("One selected game appId to probe the traffic page for"),
+});
+
+export const PreflightConnectionResponse = zod.object({
+  ok: zod.boolean(),
+  status: zod.enum([
+    "STEAMWORKS_SESSION_VALID",
+    "STEAMWORKS_SESSION_EXPIRED",
+    "STEAMWORKS_LOGIN_REQUIRED",
+    "TRAFFIC_PAGE_ACCESS_DENIED",
+    "TRAFFIC_DOWNLOAD_FAILED",
+  ]),
+  publisherName: zod.string().optional(),
+  message: zod.string().optional(),
+  checks: zod.object({
+    homeAuthenticated: zod.boolean(),
+    trafficPageReachable: zod.boolean(),
+    trafficPageStatus: zod.number().optional(),
+  }),
+});
+
+/**
  * Returns all base games (excluding demos and playtests) for the publisher
  * @summary List publisher games
  */
@@ -128,6 +164,8 @@ export const StartPullBody = zod.object({
       "monthly",
       "lifetime",
       "today",
+      "preference",
+      "previous-week",
       "previous-month",
       "previous-year",
       "custom",

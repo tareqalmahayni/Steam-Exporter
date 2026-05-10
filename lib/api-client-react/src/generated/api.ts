@@ -24,6 +24,8 @@ import type {
   GameTotalsResult,
   GamesListResult,
   HealthStatus,
+  PreflightRequest,
+  PreflightResult,
   PullRequest,
   PullStartResult,
   PullStatus,
@@ -200,6 +202,97 @@ export const useTestConnection = <
   TContext
 > => {
   return useMutation(getTestConnectionMutationOptions(options));
+};
+
+/**
+ * Stronger than /connection/test — does not just verify the home page,
+but also fetches the per-game traffic page for one selected appId
+to confirm the session has access to the data we'll actually pull.
+Use this immediately before /pull/start.
+
+ * @summary Validate Steamworks session against an actual traffic page
+ */
+export const getPreflightConnectionUrl = () => {
+  return `/api/connection/preflight`;
+};
+
+export const preflightConnection = async (
+  preflightRequest: PreflightRequest,
+  options?: RequestInit,
+): Promise<PreflightResult> => {
+  return customFetch<PreflightResult>(getPreflightConnectionUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(preflightRequest),
+  });
+};
+
+export const getPreflightConnectionMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof preflightConnection>>,
+    TError,
+    { data: BodyType<PreflightRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof preflightConnection>>,
+  TError,
+  { data: BodyType<PreflightRequest> },
+  TContext
+> => {
+  const mutationKey = ["preflightConnection"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof preflightConnection>>,
+    { data: BodyType<PreflightRequest> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return preflightConnection(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type PreflightConnectionMutationResult = NonNullable<
+  Awaited<ReturnType<typeof preflightConnection>>
+>;
+export type PreflightConnectionMutationBody = BodyType<PreflightRequest>;
+export type PreflightConnectionMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Validate Steamworks session against an actual traffic page
+ */
+export const usePreflightConnection = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof preflightConnection>>,
+    TError,
+    { data: BodyType<PreflightRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof preflightConnection>>,
+  TError,
+  { data: BodyType<PreflightRequest> },
+  TContext
+> => {
+  return useMutation(getPreflightConnectionMutationOptions(options));
 };
 
 /**

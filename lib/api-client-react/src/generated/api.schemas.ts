@@ -30,6 +30,40 @@ export interface ConnectionCredentials {
   partnerSteamLoginSecure: string;
 }
 
+export interface PreflightRequest {
+  sessionid: string;
+  steamLoginSecure: string;
+  partnerSessionid: string;
+  partnerSteamLoginSecure: string;
+  /** One selected game appId to probe the traffic page for */
+  appId: number;
+}
+
+export type PreflightResultStatus =
+  (typeof PreflightResultStatus)[keyof typeof PreflightResultStatus];
+
+export const PreflightResultStatus = {
+  STEAMWORKS_SESSION_VALID: "STEAMWORKS_SESSION_VALID",
+  STEAMWORKS_SESSION_EXPIRED: "STEAMWORKS_SESSION_EXPIRED",
+  STEAMWORKS_LOGIN_REQUIRED: "STEAMWORKS_LOGIN_REQUIRED",
+  TRAFFIC_PAGE_ACCESS_DENIED: "TRAFFIC_PAGE_ACCESS_DENIED",
+  TRAFFIC_DOWNLOAD_FAILED: "TRAFFIC_DOWNLOAD_FAILED",
+} as const;
+
+export type PreflightResultChecks = {
+  homeAuthenticated: boolean;
+  trafficPageReachable: boolean;
+  trafficPageStatus?: number;
+};
+
+export interface PreflightResult {
+  ok: boolean;
+  status: PreflightResultStatus;
+  publisherName?: string;
+  message?: string;
+  checks: PreflightResultChecks;
+}
+
 export interface ConnectionResult {
   /** Publisher account name */
   publisherName: string;
@@ -83,6 +117,8 @@ export const PullRequestGranularity = {
   monthly: "monthly",
   lifetime: "lifetime",
   today: "today",
+  preference: "preference",
+  "previous-week": "previous-week",
   "previous-month": "previous-month",
   "previous-year": "previous-year",
   custom: "custom",

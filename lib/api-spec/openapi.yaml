@@ -63,6 +63,30 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /connection/preflight:
+    post:
+      operationId: preflightConnection
+      tags: [connection]
+      summary: Validate Steamworks session against an actual traffic page
+      description: |
+        Stronger than /connection/test — does not just verify the home page,
+        but also fetches the per-game traffic page for one selected appId
+        to confirm the session has access to the data we'll actually pull.
+        Use this immediately before /pull/start.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PreflightRequest"
+      responses:
+        "200":
+          description: Preflight result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PreflightResult"
+
   /games/list:
     post:
       operationId: listGames
@@ -291,6 +315,61 @@ components:
         - partnerSessionid
         - partnerSteamLoginSecure
 
+    PreflightRequest:
+      type: object
+      properties:
+        sessionid:
+          type: string
+        steamLoginSecure:
+          type: string
+        partnerSessionid:
+          type: string
+        partnerSteamLoginSecure:
+          type: string
+        appId:
+          type: integer
+          description: One selected game appId to probe the traffic page for
+      required:
+        - sessionid
+        - steamLoginSecure
+        - partnerSessionid
+        - partnerSteamLoginSecure
+        - appId
+
+    PreflightResult:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        status:
+          type: string
+          enum:
+            - STEAMWORKS_SESSION_VALID
+            - STEAMWORKS_SESSION_EXPIRED
+            - STEAMWORKS_LOGIN_REQUIRED
+            - TRAFFIC_PAGE_ACCESS_DENIED
+            - TRAFFIC_DOWNLOAD_FAILED
+        publisherName:
+          type: string
+        message:
+          type: string
+        checks:
+          type: object
+          properties:
+            homeAuthenticated:
+              type: boolean
+            trafficPageReachable:
+              type: boolean
+            trafficPageStatus:
+              type: integer
+          required:
+            - homeAuthenticated
+            - trafficPageReachable
+      required:
+        - ok
+        - status
+        - checks
+
     ConnectionResult:
       type: object
       properties:
@@ -402,7 +481,7 @@ components:
           description: App IDs to pull data for
         granularity:
           type: string
-          enum: [daily, weekly, monthly, lifetime, today, previous-month, previous-year, custom]
+          enum: [daily, weekly, monthly, lifetime, today, preference, previous-week, previous-month, previous-year, custom]
           description: Time granularity for the pull
         customStartIso:
           type: string

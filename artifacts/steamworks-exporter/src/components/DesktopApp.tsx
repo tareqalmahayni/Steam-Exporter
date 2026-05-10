@@ -42,8 +42,11 @@ export function DesktopApp() {
   const [loginError, setLoginError] = useState<string | null>(null);
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [selectedGames, setSelectedGames] = useState<number[]>([]);
+  // Default = "preference" (rolling last 7 days). Most useful slice for
+  // weekly check-ins and avoids the "previous-month" surprise where the
+  // user pulled a much larger range than they expected.
   const [granularity, setGranularity] = useState<PullRequestGranularity>(
-    "previous-month" as PullRequestGranularity
+    "preference" as PullRequestGranularity
   );
   const [customStartIso, setCustomStartIso] = useState<string>("");
   const [customEndIso, setCustomEndIso] = useState<string>("");

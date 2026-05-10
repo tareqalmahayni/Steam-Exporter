@@ -726,11 +726,123 @@ export function getDateRangeIso(
   } else if (granularity === "today") {
     // Just today
     start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  } else if (granularity === "preference" || granularity === "previous-week") {
+    // Rolling last 7 days: today minus 6 → today (inclusive). This is the
+    // default user preference — most useful slice for weekly check-ins.
+    start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6);
+    end = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   } else if (granularity === "lifetime") {
     start.setFullYear(2003, 0, 1);
   }
   // daily: start = today (legacy alias)
   return { startIso: fmt(start), endIso: fmt(end) };
+}
+
+/**
+ * Preflight check: validates that (a) the home page is authenticated AND
+ * (b) the per-game traffic stats page for one selected appId is reachable
+ * with the supplied cookies. Used by /api/connection/preflight to gate
+ * the Pull button — surfaces session/access problems BEFORE we kick off
+ * a long pull job that would otherwise fail mid-flight.
+ *
+ * Returns one of:
+ *   STEAMWORKS_SESSION_VALID         — both checks pass
+ *   STEAMWORKS_LOGIN_REQUIRED        — home redirects/returns login form
+ *   STEAMWORKS_SESSION_EXPIRED       — cookies were valid before but expired
+ *   TRAFFIC_PAGE_ACCESS_DENIED       — home OK but traffic page is login/403
+ *   TRAFFIC_DOWNLOAD_FAILED          — network/HTTP error fetching traffic page
+ */
+export type PreflightStatus =
+  | "STEAMWORKS_SESSION_VALID"
+  | "STEAMWORKS_SESSION_EXPIRED"
+  | "STEAMWORKS_LOGIN_REQUIRED"
+  | "TRAFFIC_PAGE_ACCESS_DENIED"
+  | "TRAFFIC_DOWNLOAD_FAILED";
+
+export async function preflightSession(
+  sessionid: string,
+  steamLoginSecure: string,
+  appId: number,
+): Promise<{
+  ok: boolean;
+  status: PreflightStatus;
+  publisherName?: string;
+  message?: string;
+  checks: {
+    homeAuthenticated: boolean;
+    trafficPageReachable: boolean;
+    trafficPageStatus?: number;
+  };
+}> {
+  // Step 1 — verify home/dashboard is authenticated.
+  let homeAuthenticated = false;
+  let publisherName: string | undefined;
+  try {
+    const resp = await fetchWithCookies(`${BASE}/home`, sessionid, steamLoginSecure);
+    const html = await resp.text();
+    if (isLoginPage(html)) {
+      return {
+        ok: false,
+        status: "STEAMWORKS_LOGIN_REQUIRED",
+        message: "Steamworks home redirected to the login page. Sign in again.",
+        checks: { homeAuthenticated: false, trafficPageReachable: false },
+      };
+    }
+    homeAuthenticated = true;
+    // Best-effort publisher name extraction (matches testConnection logic).
+    const m = html.match(/<title>([^<]+)<\/title>/i);
+    if (m) publisherName = m[1].replace(/\s*-\s*Steamworks.*$/i, "").trim();
+  } catch (e) {
+    return {
+      ok: false,
+      status: "STEAMWORKS_SESSION_EXPIRED",
+      message: `Could not reach Steamworks home: ${(e as Error).message}`,
+      checks: { homeAuthenticated: false, trafficPageReachable: false },
+    };
+  }
+
+  // Step 2 — verify the per-game traffic stats page is reachable.
+  // Same URL the Excel pull will hit. If this fails, the pull would
+  // fail too, so block before starting.
+  const trafficUrl = `${BASE}/apps/navtrafficstats/${appId}`;
+  try {
+    const resp = await fetchWithCookies(trafficUrl, sessionid, steamLoginSecure);
+    const text = await resp.text();
+    const trafficPageStatus = resp.status;
+    if (isLoginPage(text)) {
+      return {
+        ok: false,
+        status: "TRAFFIC_PAGE_ACCESS_DENIED",
+        publisherName,
+        message:
+          "Home page is signed in but the per-game traffic page returned the login form. Re-sign in to refresh stats access.",
+        checks: { homeAuthenticated, trafficPageReachable: false, trafficPageStatus },
+      };
+    }
+    if (!resp.ok) {
+      return {
+        ok: false,
+        status: "TRAFFIC_PAGE_ACCESS_DENIED",
+        publisherName,
+        message: `Traffic page returned HTTP ${trafficPageStatus}. Your account may not have access to that game's stats.`,
+        checks: { homeAuthenticated, trafficPageReachable: false, trafficPageStatus },
+      };
+    }
+    return {
+      ok: true,
+      status: "STEAMWORKS_SESSION_VALID",
+      publisherName,
+      checks: { homeAuthenticated, trafficPageReachable: true, trafficPageStatus },
+    };
+  } catch (e) {
+    return {
+      ok: false,
+      status: "TRAFFIC_DOWNLOAD_FAILED",
+      publisherName,
+      message: `Could not download traffic page: ${(e as Error).message}`,
+      checks: { homeAuthenticated, trafficPageReachable: false },
+    };
+  }
 }
 
 // ─── Stat helpers ────────────────────────────────────────────────────────────

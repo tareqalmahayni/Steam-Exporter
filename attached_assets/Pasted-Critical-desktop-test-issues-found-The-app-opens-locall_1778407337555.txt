@@ -1,0 +1,131 @@
+Critical desktop test issues found.
+
+The app opens locally, but it is not production-ready.
+
+Issues:
+
+1. Steam session expires mid-pull
+The app says I am signed in, then when I generate the report it says:
+
+Steam session expired
+Your saved Steam session expired mid-pull. Sign back in to continue.
+
+This means the login detection is not enough. The app must validate that the Steamworks session can access the actual traffic/report pages before starting the pull.
+
+2. UI is unstyled/broken
+The desktop UI looks like raw unstyled text. It does not look like the proper web UI shown in Replit preview.
+Fix the desktop asset/CSS loading so the Electron app renders the full styled React UI.
+
+3. Wrong pull state shown
+The desktop app showed:
+“Pulling 7 games at previous-month granularity.”
+
+This is wrong unless the user actually selected 7 games and previous month.
+The app should only pull selected games and should use the selected visible date range.
+Default date option must remain Preference with rolling previous week.
+
+Do not change wishlist logic.
+Do not change Excel writer.
+Do not change CSV fallback.
+Do not fake traffic data.
+
+Required fixes:
+
+A. Steam session reliability
+
+1. After Steamworks login, validate access to the actual Steamworks traffic/report page, not just the home page.
+
+2. Validate both required Steamworks domains:
+- partner.steamgames.com
+- partner.steampowered.com
+
+3. Make sure the Electron persist:steamworks session cookies are being reused by the traffic pull.
+Do not use stale cookies.
+Do not store my password.
+Do not log cookie values.
+
+4. Before Generate starts, run a preflight:
+- Check logged-in status
+- Check traffic page access for at least one selected AppID
+- If invalid, show STEAMWORKS_LOGIN_REQUIRED before starting, not mid-pull.
+
+5. If session expires mid-pull:
+- Pause the job
+- Ask user to sign in again
+- After successful login, resume from the failed game/date
+- Do not restart completed pulls
+- Do not lose progress
+
+6. Add clearer status messages:
+- VALIDATING_STEAMWORKS_SESSION
+- STEAMWORKS_SESSION_VALID
+- STEAMWORKS_SESSION_EXPIRED
+- REAUTH_REQUIRED
+- RESUMING_AFTER_REAUTH
+- TRAFFIC_PAGE_ACCESS_DENIED
+- TRAFFIC_DOWNLOAD_FAILED
+
+B. Desktop UI styling
+
+1. Fix Electron desktop asset loading.
+The app must not render raw unstyled text.
+
+2. Ensure the Vite/React CSS bundle is included in the desktop build.
+
+3. Electron should render the same styled app experience as the Replit web preview:
+- Styled cards
+- Styled game checkboxes
+- Styled data type/date/traffic source sections
+- Styled Generate Report button
+- Progress log
+- Download success area
+
+4. If there is a separate DesktopApp component, style it properly or route Electron to the existing styled exporter UI.
+
+C. Selected games and date range state
+
+1. The desktop app must respect selected games only.
+If I select 1 game, it must pull 1 game.
+If I select 2 games, it must pull 2 games.
+It must never say 7 games unless 7 games actually exist and are selected.
+
+2. The date range must respect the UI:
+- Today
+- Previous Week
+- Previous Month
+- Previous Year
+- Lifetime
+- Preference
+
+3. Default selected date option must be:
+Preference
+
+4. Default Preference dates:
+runtime current date minus 6 days to runtime current date.
+
+5. The Generate flow must use exactly the visible selected start/end dates.
+
+D. Testing requirements
+
+After fixing, provide:
+1. Files changed
+2. What caused the session to expire mid-pull
+3. What changed to validate the traffic page before pulling
+4. How re-auth/resume works
+5. Why it showed 7 games and previous-month
+6. Confirmation desktop UI CSS now loads
+7. Exact local test steps
+8. Expected success messages
+9. Where the Excel output saves
+
+Acceptance criteria:
+1. Desktop UI is styled properly.
+2. App does not show raw unstyled text.
+3. Selected-games count is correct.
+4. Date range shown before generation is the exact range used.
+5. Session is validated before traffic pull starts.
+6. If session expires, app can re-auth and resume.
+7. Traffic pulls directly from Steamworks without CSV.
+8. Raw_Traffic is populated.
+9. No fake 0s.
+10. No #VALUE, #N/A, undefined, null, or [object Object].
