@@ -128,23 +128,42 @@ export function DesktopApp() {
   };
 
   // Manual escape hatch: user reports the login window shows the Steamworks
-  // dashboard but the main app still says "Waiting for sign-in…". Re-read
-  // cookies from the persistent partition (no values logged or surfaced) and
-  // hand them to the existing testConnection path.
+  // dashboard but the main app still says "Waiting for sign-in…". Calls the
+  // authoritative validator (cookie read + dashboard-HTML fetch through the
+  // persistent partition). If the dashboard fetch returns authenticated HTML
+  // we accept the session even when the cookie listener missed steamLoginSecure
+  // (HttpOnly cookies set during the federated-login bounces).
+  type ValidateChecks = {
+    sessionidPresent: boolean;
+    steamLoginSecurePresent: boolean;
+    dashboardHtmlAuthenticated: boolean;
+    dashboardReachable: boolean;
+    dashboardStatus?: number;
+    dashboardFinalUrl?: string;
+  };
   const [validatePending, setValidatePending] = useState(false);
+  const [validateChecks, setValidateChecks] = useState<ValidateChecks | null>(null);
   const handleValidateSession = async () => {
     if (!window.desktop) return;
     setValidatePending(true);
     setLoginError(null);
+    setValidateChecks(null);
     try {
-      const stored = await window.desktop.getStoredSteamCookies();
-      if (!stored || !hasUsableCreds(stored)) {
+      const result = await window.desktop.validateSteamSession();
+      setValidateChecks(result.checks);
+      if (!result.ok || !result.credentials) {
         setLoginError(
-          "STEAMWORKS_LOGIN_REQUIRED — no Steamworks session cookies found in the embedded browser. Click \"Open Steam login\" and sign in first."
+          "STEAMWORKS_SESSION_DETECTION_FAILED — the embedded Steamworks dashboard is not currently authenticated. Click \"Open Steam login\" and finish signing in (including 2FA). Diagnostic checks below."
         );
         return;
       }
-      setCredentials(stored); // triggers testConn useEffect
+      // Dashboard validated — accept and let testConn confirm via backend.
+      if (result.publisherName && !publisherName) {
+        // Optimistically display the publisher name while testConn runs.
+        // testConn's success handler will overwrite if backend disagrees.
+        setPublisherName(result.publisherName);
+      }
+      setCredentials(result.credentials);
     } catch (e) {
       setLoginError((e as Error).message ?? "Validation failed");
     } finally {
@@ -275,7 +294,24 @@ export function DesktopApp() {
                 <Alert className="max-w-md text-left border-destructive/40 bg-destructive/10">
                   <AlertTriangle className="h-4 w-4 text-destructive" />
                   <AlertDescription className="ml-2 text-sm text-destructive">
-                    {loginError}
+                    <div>{loginError}</div>
+                    {validateChecks && (
+                      <ul className="mt-2 space-y-0.5 text-xs font-mono">
+                        <li>
+                          {validateChecks.sessionidPresent ? "✓" : "✗"} sessionid present
+                        </li>
+                        <li>
+                          {validateChecks.steamLoginSecurePresent ? "✓" : "✗"} steamLoginSecure present
+                        </li>
+                        <li>
+                          {validateChecks.dashboardReachable ? "✓" : "✗"} dashboard reachable
+                          {validateChecks.dashboardStatus ? ` (HTTP ${validateChecks.dashboardStatus})` : ""}
+                        </li>
+                        <li>
+                          {validateChecks.dashboardHtmlAuthenticated ? "✓" : "✗"} dashboard HTML authenticated
+                        </li>
+                      </ul>
+                    )}
                   </AlertDescription>
                 </Alert>
               )}

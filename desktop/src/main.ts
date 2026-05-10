@@ -182,35 +182,50 @@ async function readSteamCookies(
   const { requireFull = true } = opts;
   const loginSession = session.fromPartition(STEAM_LOGIN_PARTITION);
 
-  const allCookies: Electron.Cookie[] = [];
-  for (const domain of COOKIE_DOMAINS) {
-    const cookies = await loginSession.cookies.get({ domain });
-    allCookies.push(...cookies);
-  }
+  // URL-based cookie queries: returns ALL cookies that would be sent on a
+  // request to that URL — including HttpOnly cookies and cookies scoped to
+  // a parent domain (e.g. .steamgames.com). This is the canonical reliable
+  // Electron filter and fixes the "sessionid present but steamLoginSecure
+  // never seen" symptom from the user's logs (steamLoginSecure is HttpOnly
+  // on .steamgames.com and was being missed by the domain-based filter).
+  const [steamgamesCookies, steampoweredCookies, communityCookies] = await Promise.all([
+    loginSession.cookies.get({ url: "https://partner.steamgames.com/" }),
+    loginSession.cookies.get({ url: "https://partner.steampowered.com/" }),
+    loginSession.cookies.get({ url: "https://steamcommunity.com/" }),
+  ]);
+  const allCookies: Electron.Cookie[] = [
+    ...steamgamesCookies,
+    ...steampoweredCookies,
+    ...communityCookies,
+  ];
+
+  const find = (pool: Electron.Cookie[], name: string): string =>
+    pool.find((c) => c.name === name)?.value ?? "";
 
   const creds: Credentials = {
-    sessionid: pickCookie(allCookies, "partner.steamgames.com", "sessionid"),
-    steamLoginSecure: pickCookie(allCookies, "partner.steamgames.com", "steamLoginSecure"),
-    partnerSessionid: pickCookie(allCookies, "partner.steampowered.com", "sessionid"),
-    partnerSteamLoginSecure: pickCookie(allCookies, "partner.steampowered.com", "steamLoginSecure"),
+    sessionid: find(steamgamesCookies, "sessionid"),
+    steamLoginSecure: find(steamgamesCookies, "steamLoginSecure"),
+    partnerSessionid: find(steampoweredCookies, "sessionid"),
+    partnerSteamLoginSecure: find(steampoweredCookies, "steamLoginSecure"),
   };
 
-  // Diagnostic: where each cookie was found.
+  // Diagnostic: presence flags only — never values.
   logSteam("readSteamCookies snapshot:", {
     steamgames_sessionid: !!creds.sessionid,
     steamgames_steamLoginSecure: !!creds.steamLoginSecure,
     steampowered_sessionid: !!creds.partnerSessionid,
     steampowered_steamLoginSecure: !!creds.partnerSteamLoginSecure,
-    steamcommunity_steamLoginSecure: !!pickCookie(
-      allCookies,
-      "steamcommunity.com",
-      "steamLoginSecure"
-    ),
+    steamcommunity_steamLoginSecure: !!find(communityCookies, "steamLoginSecure"),
   });
 
-  // Primary login domain is non-negotiable: without these the user has not
-  // signed into Steamworks at all.
-  if (!creds.sessionid || !creds.steamLoginSecure) return null;
+  if (!creds.sessionid || !creds.steamLoginSecure) {
+    // Last-ditch: pickCookie's parent-domain fallback walks the merged pool
+    // — for the rare case where Steam scoped a cookie unexpectedly.
+    if (!creds.sessionid) creds.sessionid = pickCookie(allCookies, "partner.steamgames.com", "sessionid");
+    if (!creds.steamLoginSecure)
+      creds.steamLoginSecure = pickCookie(allCookies, "partner.steamgames.com", "steamLoginSecure");
+    if (!creds.sessionid || !creds.steamLoginSecure) return null;
+  }
 
   // Partner-side cookies are mintable on demand via JWT refresh, so they
   // are optional for the login-completion path.
@@ -218,6 +233,121 @@ async function readSteamCookies(
     return null;
   }
   return creds;
+}
+
+// Safe cookie metadata for diagnostic logging — names/domains/path/flags
+// only, never values. Returned as an array so the renderer can display
+// it inside the STEAMWORKS_SESSION_DETECTION_FAILED error panel.
+type SafeCookieMeta = {
+  name: string;
+  domain: string;
+  path: string;
+  secure: boolean;
+  httpOnly: boolean;
+  sameSite?: string;
+};
+async function safeCookieSnapshot(): Promise<SafeCookieMeta[]> {
+  const loginSession = session.fromPartition(STEAM_LOGIN_PARTITION);
+  const urls = [
+    "https://partner.steamgames.com/",
+    "https://partner.steampowered.com/",
+    "https://steamcommunity.com/",
+    "https://store.steampowered.com/",
+  ];
+  const seen = new Map<string, SafeCookieMeta>();
+  for (const url of urls) {
+    const cookies = await loginSession.cookies.get({ url });
+    for (const c of cookies) {
+      const key = `${c.name}|${c.domain}|${c.path}`;
+      if (!seen.has(key)) {
+        seen.set(key, {
+          name: c.name,
+          domain: c.domain ?? "",
+          path: c.path ?? "/",
+          secure: !!c.secure,
+          httpOnly: !!c.httpOnly,
+          sameSite: c.sameSite,
+        });
+      }
+    }
+  }
+  return Array.from(seen.values());
+}
+
+/**
+ * Authoritative dashboard-HTML validation. Uses the persistent Electron
+ * partition's cookie jar (via session.fetch — which auto-applies cookies +
+ * HttpOnly entries) to load partner.steamgames.com/dashboard and looks for
+ * positive auth markers. This is the fallback the user requested for cases
+ * where the cookie listener never fires steamLoginSecure but the dashboard
+ * is plainly authenticated in the embedded window.
+ */
+type DashboardCheck = {
+  reachable: boolean;
+  status?: number;
+  finalUrl?: string;
+  authenticated: boolean;
+  publisherName?: string;
+  error?: string;
+};
+async function checkDashboardHtml(): Promise<DashboardCheck> {
+  const loginSession = session.fromPartition(STEAM_LOGIN_PARTITION);
+  try {
+    const resp = await loginSession.fetch("https://partner.steamgames.com/dashboard", {
+      method: "GET",
+      redirect: "follow",
+    });
+    const html = await resp.text();
+    const finalUrl = resp.url;
+
+    // Negative signals — if any of these match we are NOT authenticated.
+    const looksLikeLogin =
+      /id=["']loginForm["']/i.test(html) ||
+      /action=["']https?:\/\/(?:store\.steampowered\.com|login\.steampowered\.com|steamcommunity\.com)\/(?:login|openid)/i.test(html) ||
+      /\/login\/(?:home|getrsakey)/i.test(html) ||
+      /name=["']password["']/i.test(html) ||
+      /steam_openid_login/i.test(html) ||
+      /<title>[^<]*Sign\s*In[^<]*<\/title>/i.test(html);
+
+    // Positive signals — at least one must match for an authenticated dashboard.
+    const positives = [
+      /global_action_menu/i.test(html),
+      /\/actions\/SignOut/i.test(html),
+      /Apps\s*&amp;?\s*Packages/i.test(html),
+      /partnerid=\d+/i.test(html),
+      /g_AccountID\s*=/i.test(html),
+      /g_steamID\s*=/i.test(html),
+      /Steamworks\s*Dashboard/i.test(html),
+      /Manage\s+your\s+app/i.test(html),
+    ].filter(Boolean).length;
+
+    const authenticated = resp.ok && !looksLikeLogin && positives >= 1;
+
+    let publisherName: string | undefined;
+    if (authenticated) {
+      // Heuristic publisher-name extraction. Best-effort; not load-bearing.
+      const m =
+        html.match(/<a[^>]+class=["'][^"']*global_action_link[^"']*["'][^>]*>\s*([^<]{2,80})\s*</i) ||
+        html.match(/<title>\s*([^<|]{2,80})\s*\|\s*Steamworks/i);
+      if (m && m[1]) publisherName = m[1].trim();
+    }
+
+    logSteam("checkDashboardHtml:", {
+      status: resp.status,
+      finalUrl,
+      htmlLen: html.length,
+      looksLikeLogin,
+      positives,
+      authenticated,
+      publisherNamePresent: !!publisherName,
+    });
+
+    return { reachable: true, status: resp.status, finalUrl, authenticated, publisherName };
+  } catch (e) {
+    const err = (e as Error).message;
+    logSteam("checkDashboardHtml failed:", err);
+    return { reachable: false, authenticated: false, error: err };
+  }
 }
 
 /**
@@ -311,11 +441,31 @@ ipcMain.handle("desktop:loginToSteam", async () => {
     const tryComplete = async (reason: string) => {
       if (settled || finishing) return;
 
-      // Need EITHER (cookies present + past-login URL) OR (cookies present
-      // and we've polled enough times). Pure cookie-presence is not enough
-      // because Steam may set sessionid before the user actually signs in
-      // (CSRF tokens are sometimes minted at the login screen too).
-      const creds = await readSteamCookies({ requireFull: false });
+      let creds = await readSteamCookies({ requireFull: false });
+
+      // Dashboard-HTML fallback: if cookie reads can't find steamLoginSecure
+      // (the user-reported case — HttpOnly cookie missed by listener) but we
+      // are visibly past login (URL on partner.steamgames.com/dashboard etc),
+      // ask the partition itself whether it can load the dashboard while
+      // authenticated. session.fetch uses the partition's full cookie jar,
+      // including HttpOnly entries. If that succeeds we accept the login
+      // even with a partial cookie read.
+      if (!creds && isPastLogin(lastUrl) && /\/dashboard|\/home|\/apps/.test(lastUrl)) {
+        const dash = await checkDashboardHtml();
+        if (dash.authenticated) {
+          logSteam("dashboard HTML authenticated despite missing cookie read — accepting login");
+          // Build a creds object using whatever cookies session.fetch can see.
+          // Even if individual reads come back empty, the steamgames pair will
+          // still be available to the backend via the same partition path.
+          creds = (await readSteamCookies({ requireFull: false })) ?? {
+            sessionid: "",
+            steamLoginSecure: "",
+            partnerSessionid: "",
+            partnerSteamLoginSecure: "",
+          };
+        }
+      }
+
       if (!creds) return;
       if (!isPastLogin(lastUrl) && reason.startsWith("cookie:")) {
         logSteam("cookie present but URL still on login page —", lastUrl, "— deferring");
@@ -397,7 +547,21 @@ ipcMain.handle("desktop:loginToSteam", async () => {
     win.webContents.on("did-navigate", (_e, url) => {
       lastUrl = url;
       logSteam("did-navigate →", url, "(pastLogin=", isPastLogin(url), ")");
+      // Dump safe cookie metadata on every partner.* navigation so packaged
+      // builds are diagnosable. Names/domains/paths/flags only — never values.
+      if (/partner\.(steamgames|steampowered)\.com/.test(url)) {
+        void safeCookieSnapshot().then((snap) =>
+          logSteam("cookie snapshot @", url, snap)
+        );
+      }
       void tryComplete("did-navigate");
+    });
+    win.webContents.on("did-finish-load", () => {
+      const url = win.webContents.getURL();
+      if (/partner\.(steamgames|steampowered)\.com/.test(url)) {
+        logSteam("did-finish-load →", url);
+        void tryComplete("did-finish-load");
+      }
     });
     win.webContents.on("did-navigate-in-page", (_e, url, isMainFrame) => {
       if (isMainFrame) {
@@ -449,6 +613,62 @@ ipcMain.handle("desktop:getStoredSteamCookies", async () => {
   } catch {
     return null;
   }
+});
+
+// Authoritative session validator used by the renderer's "I'm signed in,
+// validate session" button. Combines:
+//   1. Cookie presence read (URL-based filter, sees HttpOnly + parent-scoped)
+//   2. Dashboard HTML fetch via the persistent partition
+//   3. Returns creds if usable, plus a structured `checks` object so the
+//      renderer can show STEAMWORKS_SESSION_DETECTION_FAILED with safe
+//      diagnostics if everything fails.
+// No cookie values are returned in `checks` or logs — only presence flags
+// and metadata names/domains/paths/flags.
+type ValidateResult = {
+  ok: boolean;
+  checks: {
+    sessionidPresent: boolean;
+    steamLoginSecurePresent: boolean;
+    dashboardHtmlAuthenticated: boolean;
+    dashboardReachable: boolean;
+    dashboardStatus?: number;
+    dashboardFinalUrl?: string;
+  };
+  cookieMeta: SafeCookieMeta[];
+  publisherName?: string;
+  credentials: Credentials | null;
+};
+
+ipcMain.handle("desktop:validateSteamSession", async (): Promise<ValidateResult> => {
+  const cookieMeta = await safeCookieSnapshot();
+  logSteam("validateSteamSession: cookie meta", cookieMeta);
+
+  const creds = await readSteamCookies({ requireFull: false });
+  const dash = await checkDashboardHtml();
+
+  const checks = {
+    sessionidPresent: !!creds?.sessionid,
+    steamLoginSecurePresent: !!creds?.steamLoginSecure,
+    dashboardHtmlAuthenticated: dash.authenticated,
+    dashboardReachable: dash.reachable,
+    dashboardStatus: dash.status,
+    dashboardFinalUrl: dash.finalUrl,
+  };
+
+  // Accept if EITHER the dashboard HTML is authenticated OR we have the
+  // steamgames cookie pair. Either is sufficient: the backend's
+  // testConnection will re-confirm and reject invalid sessions.
+  const ok = dash.authenticated || (!!creds?.sessionid && !!creds?.steamLoginSecure);
+
+  logSteam("validateSteamSession result:", { ok, checks });
+
+  return {
+    ok,
+    checks,
+    cookieMeta,
+    publisherName: dash.publisherName,
+    credentials: ok ? creds : null,
+  };
 });
 
 // Wipes the persisted Steam-login partition. Called from the renderer's

@@ -1,0 +1,83 @@
+Login detection is still not completing, but now we have useful terminal logs.
+
+Local Windows logs show:
+
+[steam-login] opening login window → https://partner.steamgames.com/home
+[steam-login] did-start-navigation → https://partner.steamgames.com/home
+[steam-login] cookie set: sessionid partner.steamgames.com
+[steam-login] did-navigate → https://partner.steamgames.com/home
+[steam-login] did-start-navigation → https://partner.steamgames.com/dashboard
+[steam-login] did-navigate → https://partner.steamgames.com/dashboard
+
+The Steamworks dashboard is visibly authenticated inside the Electron login window.
+I can see Level Up Gaming Company and my logged-in account.
+
+But the main Exporter window still stays stuck on:
+Waiting for sign-in...
+
+So the app sees the dashboard navigation, but does not mark signed in.
+
+Please patch the login detection again.
+
+Requirements:
+
+1. When the login window reaches:
+https://partner.steamgames.com/dashboard
+
+or any authenticated partner Steamworks page, immediately run session validation.
+
+2. Validation should not depend only on seeing a cookie-change event.
+The cookie may already exist or may be stored under a parent domain.
+
+3. On every did-navigate and did-finish-load event for partner.steamgames.com, dump safe cookie metadata:
+- cookie names
+- cookie domains
+- cookie path
+- secure/httpOnly flags
+- presence flags only
+
+Do not log cookie values.
+
+4. Add a fallback dashboard validation:
+Use the login window’s authenticated Electron session to fetch:
+https://partner.steamgames.com/dashboard
+
+If the returned HTML shows authenticated Steamworks dashboard content, such as:
+- Level Up Gaming Company
+- PartnerID
+- Dashboard
+- Apps & Packages
+then mark signed in even if steamLoginSecure is not detected directly.
+
+5. The manual button:
+"I'm signed in, validate session"
+must always be visible while Waiting for sign-in.
+
+6. Clicking the manual button should:
+- re-read all cookies from persist:steamworks
+- safely log cookie names/domains only
+- run backend testConnection
+- run dashboard HTML fallback validation
+- if dashboard validation passes, mark signed in and show the main exporter UI
+
+7. If validation fails, show:
+STEAMWORKS_SESSION_DETECTION_FAILED
+
+and show which safe checks failed:
+- sessionid present?
+- steamLoginSecure present?
+- dashboard HTML authenticated?
+- backend testConnection passed?
+
+Do not change:
+- wishlist logic
+- traffic logic
+- date logic
+- Excel writer
+- selected-games logic
+
+Acceptance criteria:
+1. If I can see the authenticated Steamworks dashboard in the Electron login window, the main app must not remain stuck forever.
+2. The main app must either mark signed in or show STEAMWORKS_SESSION_DETECTION_FAILED with safe diagnostics.
+3. Manual validate button must be visible.
+4. No cookie values are logged.

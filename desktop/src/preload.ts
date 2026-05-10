@@ -13,6 +13,27 @@ const api = {
     ipcRenderer.invoke("desktop:loginToSteam"),
   getStoredSteamCookies: (): Promise<Credentials | null> =>
     ipcRenderer.invoke("desktop:getStoredSteamCookies"),
+  validateSteamSession: (): Promise<{
+    ok: boolean;
+    checks: {
+      sessionidPresent: boolean;
+      steamLoginSecurePresent: boolean;
+      dashboardHtmlAuthenticated: boolean;
+      dashboardReachable: boolean;
+      dashboardStatus?: number;
+      dashboardFinalUrl?: string;
+    };
+    cookieMeta: Array<{
+      name: string;
+      domain: string;
+      path: string;
+      secure: boolean;
+      httpOnly: boolean;
+      sameSite?: string;
+    }>;
+    publisherName?: string;
+    credentials: Credentials | null;
+  }> => ipcRenderer.invoke("desktop:validateSteamSession"),
   clearStoredSteamCookies: (): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke("desktop:clearStoredSteamCookies"),
   openExternal: (url: string): Promise<void> =>
